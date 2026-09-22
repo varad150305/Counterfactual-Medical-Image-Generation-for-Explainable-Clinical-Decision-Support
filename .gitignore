@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Data & checkpoints (large, not committed)
+data/**
+!data/.gitkeep
+checkpoints/**
+!checkpoints/.gitkeep
+experiments/**
+!experiments/.gitkeep
+out/
+*.safetensors
+*.ckpt
+*.bin
+
+# External reference repos (cloned for audit, not our code)
+external/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

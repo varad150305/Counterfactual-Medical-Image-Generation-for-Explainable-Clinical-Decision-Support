@@ -1,0 +1,27 @@
+# Environment verified in Phase 1 (CPU-only, no CUDA). Install into a venv:
+#   python -m venv .venv
+#   .venv/Scripts/python.exe -m pip install -r requirements.txt --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+#
+# Versions below mirror the official PRISM requirements.txt (diffusers/transformers/pillow pins)
+# plus compatibility fixes discovered during Phase 1 audit (see docs/PHASE_1_AUDIT.md, section F).
+torch
+torchvision
+diffusers==0.24.0
+transformers==4.37.2
+pillow>=10.1  # PRISM pins ==9.0.1, but that conflicts with scikit-image>=0.25 (needs >=10.1); see docs/PHASE_1_AUDIT.md section F
+accelerate==0.26.1
+huggingface_hub==0.20.3
+safetensors
+tqdm
+scipy
+ftfy
+pydantic>=1.7.4,<2.0.0
+scikit-learn
+scikit-image
+opencv-python
+nltk
+numpy
+pandas
+matplotlib
+seaborn
+pytest

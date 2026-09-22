@@ -1,0 +1,15 @@
+{
+  "load_time_s": 201.16,
+  "infer_time_s": 140.21,
+  "num_inference_steps": 15,
+  "prompt": "Chest X-ray showing Pneumonia",
+  "image_size": [
+    512,
+    512
+  ],
+  "image_mode": "RGB",
+  "pixel_min": 44,
+  "pixel_max": 255,
+  "has_nan": false,
+  "saved_to": "C:\\Users\\Varad\\OneDrive\\Desktop\\genai mini project\\docs\\phase1_artifacts\\sd_v1_5_smoke_test.png"
+}
