@@ -368,3 +368,93 @@ class TestKaggleBridge:
         assert "pip install" not in code and "pip3 install" not in code  # all installs go through kaggle_bootstrap (torch-guarded)
         assert "--require-gpu" in code
         assert len(code.splitlines()) < 90, "runner notebook should stay thin"
+
+
+class TestNotebookRepoDiscovery:
+    """Regression: the notebook asserted `/kaggle/input/*/GIT_INFO.json` (depth 1, unextracted-zip and
+    nested-mount unaware) and failed with `found []` on a real Kaggle session. These tests execute the
+    notebook's real discovery cell against fake /kaggle/input layouts."""
+
+    @staticmethod
+    def _run_cell(tmp_path, build):
+        import glob
+        import os
+        import shutil
+
+        inp, temp = tmp_path / "input", tmp_path / "temp"
+        inp.mkdir()
+        temp.mkdir()
+        build(inp)
+        nb = json.loads((REPO / "notebooks" / "kaggle_runner.ipynb").read_text(encoding="utf-8"))
+        src = "".join(nb["cells"][2]["source"])
+        src = src.replace("/kaggle/input", inp.as_posix()).replace("/kaggle/temp", temp.as_posix())
+        calls, said = [], []
+        env = {"glob": glob, "os": os, "shutil": shutil, "sys": sys, "REPO": "/work/repo",
+               "say": said.append, "run": lambda name, cmd: calls.append(cmd)}
+        exec(compile(src, "cell2", "exec"), env)
+        return calls, said
+
+    @staticmethod
+    def _make_pkg(root: Path):
+        (root / "scripts").mkdir(parents=True)
+        (root / "scripts" / "kaggle_bootstrap.py").write_text("# stub")
+        (root / "GIT_INFO.json").write_text("{}")
+
+    def test_dataset_mounted_at_depth_1(self, tmp_path):
+        calls, _ = self._run_cell(tmp_path, lambda inp: self._make_pkg(inp / "genai-mini-project"))
+        assert Path(calls[0][1]).as_posix().endswith("genai-mini-project/scripts/kaggle_bootstrap.py")
+        # the repo root is passed explicitly, so even an older bootstrap (which globbed /kaggle/input itself) works
+        assert Path(calls[0][calls[0].index("--repo-src") + 1]) == Path(calls[0][1]).parents[1]
+
+    def test_dataset_mounted_in_nested_owner_layout(self, tmp_path):
+        calls, _ = self._run_cell(tmp_path, lambda inp: self._make_pkg(inp / "datasets" / "someowner" / "genai-mini-project"))
+        assert "someowner/genai-mini-project/scripts/kaggle_bootstrap.py" in Path(calls[0][1]).as_posix()
+
+    def test_prefers_dataset_over_a_previous_output_copy_of_the_repo(self, tmp_path):
+        def build(inp):
+            self._make_pkg(inp / "genai-mini-project")
+            self._make_pkg(inp / "previous-notebook" / "repo")  # earlier version's /kaggle/working/repo, attached for resume
+        calls, _ = self._run_cell(tmp_path, build)
+        assert "/genai-mini-project/scripts/" in Path(calls[0][1]).as_posix()
+
+    def test_unextracted_zip_is_unpacked(self, tmp_path):
+        def build(inp):
+            pkg = tmp_path / "pkgsrc"
+            self._make_pkg(pkg)
+            ds = inp / "genai-mini-project"
+            ds.mkdir()
+            with zipfile.ZipFile(ds / "kaggle_repo.zip", "w") as z:
+                z.write(pkg / "scripts" / "kaggle_bootstrap.py", "scripts/kaggle_bootstrap.py")
+                z.write(pkg / "GIT_INFO.json", "GIT_INFO.json")
+        calls, _ = self._run_cell(tmp_path, build)
+        assert Path(calls[0][1]).as_posix().endswith("repo_src/scripts/kaggle_bootstrap.py") and Path(calls[0][1]).exists()
+
+    def test_nothing_attached_raises_with_a_clear_message(self, tmp_path):
+        with pytest.raises(AssertionError, match="repo package not found"):
+            self._run_cell(tmp_path, lambda inp: (inp / "some-other-dataset").mkdir())
+
+    def test_bootstrap_locates_the_repo_from_its_own_path(self, tmp_path):
+        import shutil
+
+        pkg = tmp_path / "anywhere" / "deeply" / "nested" / "pkg"
+        (pkg / "scripts").mkdir(parents=True)
+        shutil.copy(REPO / "scripts" / "kaggle_bootstrap.py", pkg / "scripts")
+        (pkg / "GIT_INFO.json").write_text("{}")
+        (pkg / "requirements.txt").write_text("numpy" + chr(10))
+        spec = importlib.util.spec_from_file_location("boot_copy", pkg / "scripts" / "kaggle_bootstrap.py")
+        boot = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(boot)
+        work = tmp_path / "work"
+        assert boot.main(["--workdir", str(work), "--skip-install"]) == 0
+        assert (work / "GIT_INFO.json").exists() and (work / "scripts" / "kaggle_bootstrap.py").exists()
+
+    def test_bootstrap_refuses_a_tree_that_is_not_a_package(self, tmp_path):
+        import shutil
+
+        pkg = tmp_path / "notpkg"
+        (pkg / "scripts").mkdir(parents=True)
+        shutil.copy(REPO / "scripts" / "kaggle_bootstrap.py", pkg / "scripts")
+        spec = importlib.util.spec_from_file_location("boot_copy2", pkg / "scripts" / "kaggle_bootstrap.py")
+        boot = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(boot)
+        assert boot.main(["--workdir", str(tmp_path / "w"), "--skip-install"]) == 3

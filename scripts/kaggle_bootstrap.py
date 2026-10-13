@@ -13,7 +13,6 @@ Protection against replacing torch (all three are applied):
   python scripts/kaggle_bootstrap.py [--repo-src /kaggle/input/<dataset>] [--workdir /kaggle/working/repo]
 """
 import argparse
-import glob
 import json
 import re
 import shutil
@@ -70,19 +69,16 @@ def probe_torch() -> dict:
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--repo-src", help="dataset dir containing GIT_INFO.json (auto-detected under /kaggle/input)")
+    p.add_argument("--repo-src", help="repo root containing GIT_INFO.json (default: the repo this script lives in, "
+                                      "so it works wherever Kaggle mounts the dataset)")
     p.add_argument("--workdir", default="/kaggle/working/repo")
     p.add_argument("--skip-install", action="store_true")
     args = p.parse_args(argv)
 
-    src = args.repo_src
-    if not src:
-        hits = glob.glob("/kaggle/input/*/GIT_INFO.json")
-        if len(hits) != 1:
-            print(f"Expected exactly one repo dataset with GIT_INFO.json under /kaggle/input, found {hits}. Pass --repo-src.")
-            print(f"/kaggle/input contains: {sorted(Path('/kaggle/input').iterdir()) if Path('/kaggle/input').is_dir() else 'MISSING'}")
-            return 3
-        src = str(Path(hits[0]).parent)
+    src = args.repo_src or str(Path(__file__).resolve().parents[1])
+    if not (Path(src) / "GIT_INFO.json").exists():
+        print(f"{src} has no GIT_INFO.json - not a package built by scripts/package_for_kaggle.py.")
+        return 3
     work = Path(args.workdir)
     shutil.copytree(src, work, dirs_exist_ok=True)
     print(f"repo copied: {src} -> {work} | {json.loads((work / 'GIT_INFO.json').read_text())}")
