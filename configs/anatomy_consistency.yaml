@@ -1,0 +1,12 @@
+# Experiment C — PRISM + disease consistency + anatomical preservation:
+#   L = L_diffusion + lambda1 * L_disease + lambda2 * L_preserve
+# Structure only. L_preserve is implemented in Phase 7; until then this config is refused at
+# run time. lambda2 intentionally unset (null).
+extends: disease_consistency.yaml
+
+experiment:
+  id: C
+  name: C_prism_plus_disease_plus_anatomy
+
+losses:
+  anatomy_preservation: {enabled: true, weight: null}   # lambda2

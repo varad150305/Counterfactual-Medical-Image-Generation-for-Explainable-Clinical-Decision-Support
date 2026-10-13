@@ -1,0 +1,29 @@
+# Experiment A — PRISM baseline:  L = L_diffusion
+# Extends the Phase 3 inference config; behaviour is unchanged (same editing/model/evaluation
+# keys). Adds the experiment/loss blocks and the list of counterfactual requests that
+# scripts/run_experiment.py executes.
+#
+# NOTE: the Phase 3 reconstruction has not yet been shown to perform the requested edit
+# (docs/PHASE_3_PRISM_BASELINE.md); the default input below is a SYNTHETIC image used only
+# for pipeline validation. Real-image runs are Phase 5.
+extends: prism_baseline.yaml
+
+experiment:
+  id: A
+  name: A_prism_baseline
+
+task: counterfactual
+seed: 42
+
+losses:
+  diffusion: {enabled: true, weight: 1.0}
+  disease_consistency: {enabled: false, weight: null}
+  anatomy_preservation: {enabled: false, weight: null}
+
+inputs:
+  - image: data/synthetic_chexpert/images/patient00001/study1/view1_frontal.jpg
+    pathology: Cardiomegaly
+    operation: add
+
+output:
+  run_root: experiments   # runs go to <run_root>/<experiment.name>/<run_id>/

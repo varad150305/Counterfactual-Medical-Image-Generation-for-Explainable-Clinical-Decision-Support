@@ -22,6 +22,7 @@ from src.models.prism import ptp_utils
 from src.models.prism.attention_control import make_controller
 from src.models.prism.clip_similarity import ClipSimilarity
 from src.models.prism.null_inversion import NullInversion
+from src.utils.config import resolve_device
 
 NO_FINDING_CAPTION = "Normal chest X-ray with no significant findings"
 
@@ -90,7 +91,7 @@ class PrismCounterfactualGenerator:
         editing_cfg = config.get("editing", {})
         eval_cfg = config.get("evaluation", {})
 
-        self.device = torch.device(model_cfg.get("device", "cpu"))
+        self.device = resolve_device(model_cfg.get("device", "cpu"))  # raises if cuda requested but unavailable
         self.editing_cfg = editing_cfg
 
         self.pipe = self._load_pipeline(model_cfg)

@@ -6,6 +6,7 @@ machine — docs/PHASE_1_AUDIT.md), with masked BCE loss so uncertain-policy
 """
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Dict, Optional
@@ -20,7 +21,7 @@ from src.data.constants import DEFAULT_TARGET_FINDINGS
 from src.data.loading import load_and_split
 from src.evaluation.metrics import compute_auroc_auprc
 from src.models.classifier import DenseNet121Classifier
-from src.utils.config import set_seed
+from src.utils.config import resolve_device, set_seed
 
 logger = logging.getLogger(__name__)
 
@@ -32,16 +33,39 @@ def masked_bce_loss(logits: torch.Tensor, labels: torch.Tensor, mask: torch.Tens
     return masked.sum() / denom
 
 
+def _atomic_save(obj, path: Path) -> None:
+    """Write-then-rename so an interrupted session never leaves a truncated checkpoint."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    torch.save(obj, tmp)
+    os.replace(tmp, path)
+
+
+_TRAINER_HANDLERS: list = []
+
+
 def _setup_logging(log_dir: Path) -> None:
+    """Log to <log_dir>/train_<ts>.log. If the caller (e.g. scripts/run_experiment.py)
+    already configured root logging, ADD our file handler instead of replacing theirs
+    (basicConfig(force=True) used to wipe the caller's run.log handler); standalone, also
+    log to the console as before. Handlers from a previous train() call are removed first."""
     log_dir.mkdir(parents=True, exist_ok=True)
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     log_file = log_dir / f"train_{timestamp}.log"
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-        handlers=[logging.FileHandler(log_file), logging.StreamHandler()],
-        force=True,
-    )
+    root = logging.getLogger()
+    for old in _TRAINER_HANDLERS:
+        root.removeHandler(old)
+        old.close()
+    _TRAINER_HANDLERS.clear()
+
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s")
+    handlers = [logging.FileHandler(log_file)]
+    if not root.handlers:
+        handlers.append(logging.StreamHandler())
+    for handler in handlers:
+        handler.setFormatter(formatter)
+        root.addHandler(handler)
+    root.setLevel(logging.INFO)
+    _TRAINER_HANDLERS.extend(handlers)
     logger.info("Logging to %s", log_file)
 
 
@@ -109,7 +133,7 @@ def train(config: Dict, checkpoint_override: Optional[str] = None) -> Dict:
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
     test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
-    device = torch.device("cuda" if torch.cuda.is_available() and train_cfg.get("device", "cpu") == "cuda" else "cpu")
+    device = resolve_device(train_cfg.get("device", "cpu"))  # raises if cuda requested but unavailable
     logger.info("Using device: %s", device)
 
     model = build_model(model_cfg, num_labels=len(target_findings)).to(device)
@@ -123,8 +147,26 @@ def train(config: Dict, checkpoint_override: Optional[str] = None) -> Dict:
     epochs = train_cfg.get("epochs", 3)
     best_val_auroc = -1.0
     history = []
+    start_epoch = 0
 
-    for epoch in range(epochs):
+    # Resume (Kaggle sessions are time-limited): continue from a previous
+    # last.pt. Restores weights, optimizer state, epoch counter, history and
+    # best-so-far; RNG state is NOT restored, so a resumed run is not
+    # bit-identical to an uninterrupted one.
+    resume_from = train_cfg.get("resume_from")
+    if resume_from:
+        ckpt = torch.load(resume_from, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt["model_state_dict"])
+        if "optimizer_state_dict" in ckpt:
+            optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        else:
+            logger.warning("Checkpoint %s has no optimizer state; resuming weights only", resume_from)
+        start_epoch = int(ckpt["epoch"])
+        history = list(ckpt.get("history", []))
+        best_val_auroc = float(ckpt.get("best_val_auroc", -1.0))
+        logger.info("Resumed from %s at epoch %d/%d", resume_from, start_epoch, epochs)
+
+    for epoch in range(start_epoch, epochs):
         model.train()
         epoch_loss, n_batches = 0.0, 0
         t0 = time.time()
@@ -162,13 +204,17 @@ def train(config: Dict, checkpoint_override: Optional[str] = None) -> Dict:
                 "model": model_cfg,
             },
             "val_metrics": val_metrics,
+            "optimizer_state_dict": optimizer.state_dict(),
+            "history": history,
         }
-        torch.save(checkpoint, checkpoint_dir / "last.pt")
-
         val_auroc = val_metrics["macro_auroc"] or -1.0
-        if val_auroc > best_val_auroc:
+        is_best = val_auroc > best_val_auroc
+        if is_best:
             best_val_auroc = val_auroc
-            torch.save(checkpoint, checkpoint_dir / "best.pt")
+        checkpoint["best_val_auroc"] = best_val_auroc
+        _atomic_save(checkpoint, checkpoint_dir / "last.pt")
+        if is_best:
+            _atomic_save(checkpoint, checkpoint_dir / "best.pt")
             logger.info("New best checkpoint (val_macro_auroc=%.4f) -> %s", val_auroc, checkpoint_dir / "best.pt")
 
     test_metrics = evaluate(model, test_loader, device, target_findings)

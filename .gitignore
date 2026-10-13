@@ -28,3 +28,6 @@ external/
 # OS
 .DS_Store
 Thumbs.db
+
+# Kaggle packaging output
+dist/

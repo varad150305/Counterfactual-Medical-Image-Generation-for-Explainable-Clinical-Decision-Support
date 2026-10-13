@@ -1,0 +1,16 @@
+# Experiment B — PRISM + disease consistency:  L = L_diffusion + lambda1 * L_disease
+# Structure only. L_disease is implemented in Phase 6; until then scripts/run_experiment.py
+# refuses to run this config (NotImplementedError). lambda1 is intentionally unset (null):
+# choosing it is part of Phase 6, not a Phase 4 decision.
+extends: baseline.yaml
+
+experiment:
+  id: B
+  name: B_prism_plus_disease
+
+losses:
+  disease_consistency: {enabled: true, weight: null}   # lambda1
+
+# Frozen independent classifier used by L_disease. Must be the *real-data* classifier from
+# the Phase 5 gate; the synthetic Phase 2 checkpoint is not a valid research classifier.
+classifier_checkpoint: null
