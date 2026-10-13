@@ -22,6 +22,9 @@ external/
 # Logs
 *.log
 
+# Claude Code runtime state (lock files etc.)
+.claude/
+
 # OS
 .DS_Store
 Thumbs.db

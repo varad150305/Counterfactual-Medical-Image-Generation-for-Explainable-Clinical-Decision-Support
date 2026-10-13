@@ -1,0 +1,33 @@
+# Phase 2 smoke-test config: trains on the SYNTHETIC placeholder dataset
+# (scripts/make_synthetic_chexpert.py), not real CheXpert. Used to prove the
+# pipeline is mechanically and numerically correct (loss decreases, AUROC
+# computable, checkpoint round-trips) when real CheXpert access isn't
+# available. See docs/PHASE_2_DATASET_CLASSIFIER.md.
+
+data:
+  csv_path: data/synthetic_chexpert/labels.csv
+  image_root: data/synthetic_chexpert
+  target_findings: ["No Finding", "Pneumonia", "Pleural Effusion", "Cardiomegaly"]
+  uncertain_policy: ignore   # ignore | zeros | ones — see src/data/labels.py
+  image_size: 224
+  max_samples: null
+  split:
+    train: 0.70
+    val: 0.15
+    test: 0.15
+    seed: 42
+
+model:
+  architecture: densenet121
+  pretrained: true
+
+training:
+  epochs: 5
+  batch_size: 8
+  lr: 0.0001
+  weight_decay: 0.00001
+  num_workers: 0
+  seed: 42
+  device: cpu
+  log_dir: experiments/classifier_synthetic_smoke/logs
+  checkpoint_dir: checkpoints/classifier_synthetic_smoke

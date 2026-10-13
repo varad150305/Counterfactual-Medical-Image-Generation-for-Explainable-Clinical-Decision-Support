@@ -1,0 +1,33 @@
+# Phase 2 real-data config template. csv_path/image_root are placeholders —
+# fill them in once CheXpert is downloaded (requires a Stanford ML Group
+# signup: https://stanfordmlgroup.github.io/competitions/chexpert/). This
+# config was NOT run in Phase 2 (no local copy of CheXpert exists — see
+# docs/PHASE_2_DATASET_CLASSIFIER.md, "Dataset status").
+
+data:
+  csv_path: null   # e.g. data/CheXpert-v1.0-small/train.csv
+  image_root: null # e.g. data/  (Path column is relative to this)
+  target_findings: ["No Finding", "Pneumonia", "Pleural Effusion", "Cardiomegaly"]
+  uncertain_policy: ignore
+  image_size: 224
+  max_samples: null   # set to an int (e.g. 2000) for a quick real-data smoke run
+  split:
+    train: 0.70
+    val: 0.15
+    test: 0.15
+    seed: 42
+
+model:
+  architecture: densenet121
+  pretrained: true
+
+training:
+  epochs: 20
+  batch_size: 16
+  lr: 0.0001
+  weight_decay: 0.00001
+  num_workers: 4
+  seed: 42
+  device: cpu   # no CUDA available on the dev machine, see docs/PHASE_1_AUDIT.md
+  log_dir: experiments/classifier_chexpert/logs
+  checkpoint_dir: checkpoints/classifier_chexpert
