@@ -1,0 +1,32 @@
+# Phase 3 PRISM baseline inference config. All editing hyperparameters here,
+# not hardcoded — see docs/PHASE_3_PRISM_BASELINE.md for what each one does
+# and which are deviations from the paper's defaults (made for CPU
+# feasibility, per docs/PHASE_1_AUDIT.md's compute-constraint findings).
+
+model:
+  ldm_type: finetuned_chexpert   # stable_diffusion_v1_4 | stable_diffusion_v1_5 | stable_diffusion_mimic_cxr_v0.1 | finetuned_chexpert
+  base_model_id: runwayml/stable-diffusion-v1-5
+  finetuned_checkpoint_path: checkpoints/prism/model.safetensors  # amar-kr/PRISM on HuggingFace — see docs/PHASE_1_AUDIT.md section G
+  device: cpu   # no CUDA available on the dev machine, see docs/PHASE_1_AUDIT.md
+
+editing:
+  # Paper/PRISM default is 512; reduced for CPU wall-clock feasibility (see
+  # docs/PHASE_1_AUDIT.md section I compute-feasibility estimates). Increase
+  # once running on a GPU.
+  image_size: 256
+  num_ddim_steps: 20        # paper commonly uses 50; reduced for CPU
+  num_inner_steps: 3        # PRISM's own default is 10 [VERIFIED FROM CODE]; reduced for CPU null-text-optimization cost
+  guidance_scale: 7.5
+  self_replace_steps: 0.6   # PRISM sweeps [0.4, 0.5, 0.6, 0.7, 0.8]; single value here, see docs/PHASE_3_PRISM_BASELINE.md
+  cross_replace_steps: 0.8  # matches PRISM's own default {"default_": 0.8} [VERIFIED FROM CODE]
+  edit_word_weight: 2.0     # matches PRISM's own default [VERIFIED FROM CODE]
+  early_stop_epsilon: 0.00001  # NOT 1e-5: PyYAML parses "1e-5" (no decimal point) as a string
+  local_blend: true         # spatially restrict the edit to the target-pathology region (source-image preservation)
+  seed: 42
+
+evaluation:
+  clip_model: openai/clip-vit-base-patch32
+  compute_clip_metrics: true
+
+output:
+  output_dir: experiments/prism_baseline/outputs

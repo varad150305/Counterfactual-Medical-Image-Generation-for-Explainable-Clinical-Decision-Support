@@ -1,0 +1,32 @@
+{
+  "original_caption": "Normal chest X-ray with no significant findings",
+  "edited_caption": "Chest X-ray showing Cardiomegaly",
+  "target_pathology": "Cardiomegaly",
+  "operation": "add",
+  "metrics": {
+    "clip_image_text_similarity_original": 0.2541286051273346,
+    "clip_image_text_similarity_edited": 0.24043016135692596,
+    "clip_directional_similarity": -0.011362634599208832,
+    "clip_image_image_similarity": 0.8486848473548889
+  },
+  "inference_info": {
+    "timings": {
+      "inversion_seconds": 537.65,
+      "editing_seconds": 103.2,
+      "clip_metrics_seconds": 1.28
+    },
+    "total_seconds": 642.13,
+    "params": {
+      "num_ddim_steps": 20,
+      "num_inner_steps": 3,
+      "guidance_scale": 7.5,
+      "self_replace_steps": 0.6,
+      "cross_replace_steps": 0.8,
+      "edit_word_weight": 2.0,
+      "local_blend": true,
+      "seed": 42
+    },
+    "ldm_type": "finetuned_chexpert",
+    "image_path": "data/synthetic_chexpert/images/patient00001/study1/view1_frontal.jpg"
+  }
+}
