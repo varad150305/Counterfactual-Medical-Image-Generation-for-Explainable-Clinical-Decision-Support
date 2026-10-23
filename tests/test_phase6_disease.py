@@ -144,8 +144,9 @@ class TestFinetuneLoop:
         df = select_training_frame(cfg["finetune"]["data"], 0, None)
         ds = FinetuneDataset(df, tiny_data[1], 64, TARGETS, "ignore")
         batch = {k: torch.stack([ds[i][k] for i in range(2)]) if k != "caption" else [ds[i][k] for i in range(2)] for k in ("image", "caption", "labels", "mask")}
-        _, l_dis, n_sel = tr.micro_losses(batch, torch.Generator().manual_seed(0))
-        assert n_sel == 2 and l_dis is not None
+        out = tr.micro_losses(batch, torch.Generator().manual_seed(0))
+        l_dis, n_sel = out.l_dis, out.n_sel
+        assert n_sel == 2 and l_dis is not None and out.l_pres is None       # experiment B has no preservation term
         tr.unet.zero_grad()
         l_dis.backward()
         grads = {n: p.grad for n, p in tr.unet.named_parameters()}
@@ -227,17 +228,14 @@ class TestConfigs:
         assert ft["data"]["use_split"] == "val" and ft["trainable"] == "attention" and ft["disease"]["t_max"] == 500
         assert ft["data"]["split"] == {"train": 0.70, "val": 0.15, "test": 0.15, "seed": 42} and ft["data"]["max_samples"] == 100000
 
-    def test_B_needs_lambda_and_C_still_refuses_to_run(self):
+    def test_B_is_runnable_with_the_recorded_lambda1_and_C_needs_lambda2(self):
         from src.utils.experiment import ExperimentConfigError, assert_runnable, validate_experiment_config
 
-        spec = validate_experiment_config(self._load("phase6_finetune_B.yaml"))
-        with pytest.raises(ExperimentConfigError, match="weight must be set"):
-            assert_runnable(spec)                                           # lambda1 is chosen by the pre-registered rule, not defaulted
         b = self._load("phase6_finetune_B.yaml")
-        b["losses"]["disease_consistency"]["weight"] = 0.3
+        assert b["losses"]["disease_consistency"]["weight"] == 0.5          # the Phase 6 rule R2 value, recorded
         assert_runnable(validate_experiment_config(b))
-        with pytest.raises(NotImplementedError, match="Phase 7"):
-            assert_runnable(validate_experiment_config(self._load("anatomy_consistency.yaml")))
+        with pytest.raises(ExperimentConfigError, match="weight must be set"):
+            assert_runnable(validate_experiment_config(self._load("anatomy_consistency.yaml")))   # lambda2 is set by the Phase 7 rule
 
     def test_run_experiment_dry_run_accepts_the_new_task(self, capsys):
         run = load_script("run_experiment")
@@ -336,6 +334,9 @@ class TestEvaluationPieces:
         assert len(load_config(str(out / "generated_eval_viability.yaml"))["inputs"]) == 2
         b = load_config(str(out / "generated_phase6_B.yaml"))
         a = load_config(str(out / "generated_phase6_A.yaml"))
+        c = load_config(str(out / "generated_phase7_C.yaml"))
+        assert c["classifier_checkpoint"] == clf.as_posix() and c["losses"]["anatomy_preservation"]["enabled"] is True
+        assert c["losses"]["disease_consistency"]["weight"] == 0.5 and c["finetune"]["data"] == b["finetune"]["data"]
         assert b["classifier_checkpoint"] == clf.as_posix() and a.get("classifier_checkpoint") is None
         assert a["finetune"]["data"] == b["finetune"]["data"] and a["finetune"]["data"]["csv_path"] == clf_cfg["data"]["csv_path"]
 

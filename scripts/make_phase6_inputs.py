@@ -63,12 +63,13 @@ def main(argv=None) -> int:
     image_root = Path(data["image_root"])
     ft_data = {"csv_path": data["csv_path"], "image_root": data["image_root"]}
     base_model = {"finetuned_checkpoint_path": Path(args.prism_checkpoint).as_posix()}
-    for arm in ("A", "B"):
-        cfg = {"extends": (REPO / "configs" / f"phase6_finetune_{arm}.yaml").as_posix(),
+    for arm in ("A", "B", "C"):
+        cfg_name = "phase7_finetune_C.yaml" if arm == "C" else f"phase6_finetune_{arm}.yaml"
+        cfg = {"extends": (REPO / "configs" / cfg_name).as_posix(),
                "model": base_model, "finetune": {"data": ft_data}}
-        if arm == "B":
+        if arm in ("B", "C"):
             cfg["classifier_checkpoint"] = Path(args.classifier_checkpoint).as_posix()
-        (out / f"generated_phase6_{arm}.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False))
+        (out / (f"generated_phase7_{arm}.yaml" if arm == "C" else f"generated_phase6_{arm}.yaml")).write_text(yaml.safe_dump(cfg, sort_keys=False))
     print(f"wrote fine-tune configs to {out}")
 
     _, _, test_df = load_and_split(data, default_seed=int(clf_cfg.get("training", {}).get("seed", 42)))

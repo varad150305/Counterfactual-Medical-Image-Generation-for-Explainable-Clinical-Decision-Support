@@ -1,11 +1,13 @@
-"""Shared U-Net fine-tuning loop for experiments A and B (Phase 6).
+"""Shared U-Net fine-tuning loop for experiments A, B (Phase 6) and C (Phase 7).
 
     A:  L = L_diffusion
-    B:  L = L_diffusion + lambda1 * L_disease        (losses.disease_consistency.enabled / weight)
+    B:  L = L_diffusion + lambda1 * L_disease                          (losses.disease_consistency.enabled / weight)
+    C:  L = L_diffusion + lambda1 * L_disease + lambda2 * L_preserve   (losses.anatomy_preservation.enabled / weight)
 
-One code path; B differs from A only by the L_disease term (A and B draw identical data order, noise and timesteps
-from a dedicated CPU generator, and L_disease consumes no randomness; with weight 0 it is computed for logging only,
-under no_grad, so B(lambda1=0) reproduces A — tests/test_phase6_disease.py).
+One code path; each arm differs from the previous one only by one loss term (all arms draw identical data order, noise and
+timesteps from a dedicated CPU generator, and L_disease / L_preserve consume no randomness; with weight 0 a term is computed
+for logging only, under no_grad, so B(lambda1=0) reproduces A and C(lambda2=0) reproduces B — tests/test_phase6_disease.py,
+tests/test_phase7_anatomy.py).
 
 L_diffusion is PRISM's: eps-prediction MSE on CheXpert (image, caption) pairs with its caption rule
 (external/PRISM/finetune_chexpert.py). Starting point: the PRISM CheXpert checkpoint (the same for every arm).
@@ -18,12 +20,18 @@ Deviations from PRISM's fine-tuning (compute, documented in docs/PHASE_6_DISEASE
 L_disease: x0_hat = (x_t - sqrt(1-abar_t) eps_theta) / sqrt(abar_t) is decoded by the frozen VAE and classified by the
 frozen Phase 5b DenseNet121 (src/losses/disease_consistency.py); target = the image's own 4-finding labels with the
 `ignore` mask. It applies only to samples with t < finetune.disease.t_max (x0_hat is uninformative at high noise).
+
+L_preserve (Phase 7): on the same decoded estimate, D(F(original), F(generated)) where F = the early/mid DenseNet blocks
+(denseblock1, denseblock2) of the SAME frozen classifier (edges, ribs, lung/heart texture; no new model) and D = an
+LPIPS-style normalised feature distance (src/losses/disease_consistency.py). The original is the real training image x.
+It anchors the generated image to the real patient's anatomy while L_disease pushes the classifier output - the failure
+that B showed (classifier-hacking blobs) is a drift away from x. Region-aware weighting is not used (no segmentation model).
 """
 import json
 import logging
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, NamedTuple, Optional
 
 import numpy as np
 import pandas as pd
@@ -35,7 +43,7 @@ from torch.utils.data import DataLoader, Dataset, Subset
 from src.data.constants import CHEXPERT_ALL_FINDINGS, DEFAULT_TARGET_FINDINGS
 from src.data.labels import build_label_and_mask
 from src.data.loading import load_and_split
-from src.losses.disease_consistency import FrozenClassifier, disease_consistency_loss, file_sha256
+from src.losses.disease_consistency import ANATOMY_LAYERS, FrozenClassifier, anatomical_distance, disease_consistency_loss, file_sha256
 from src.utils.config import resolve_device
 
 logger = logging.getLogger(__name__)
@@ -81,6 +89,13 @@ def _atomic_torch_save(obj, path: Path) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     torch.save(obj, tmp)
     tmp.replace(path)
+
+
+class Losses(NamedTuple):
+    l_diff: torch.Tensor
+    l_dis: Optional[torch.Tensor]    # None unless the disease term is enabled and at least one sample has t < t_max
+    l_pres: Optional[torch.Tensor]   # None unless the anatomy term is enabled and at least one sample has t < t_max
+    n_sel: int
 
 
 class Finetuner:
@@ -133,18 +148,32 @@ class Finetuner:
         self.dis_enabled = bool(dis.get("enabled", False))
         self.dis_weight = float(dis.get("weight") or 0.0)
         self.t_max = int((ft.get("disease") or {}).get("t_max", 500))
+        anat = (cfg.get("losses") or {}).get("anatomy_preservation") or {}
+        self.anat_enabled = bool(anat.get("enabled", False))
+        self.anat_weight = float(anat.get("weight") or 0.0)
+        self.anat_layers = tuple((ft.get("anatomy") or {}).get("layers", ANATOMY_LAYERS))
+        if self.anat_enabled and not self.dis_enabled:
+            raise ValueError("anatomy_preservation requires disease_consistency (experiment C = B + preservation)")
         self.classifier: Optional[FrozenClassifier] = None
         if self.dis_enabled:
             self.classifier = FrozenClassifier(cfg.get("classifier_checkpoint"), cfg.get("classifier_sha256"), device)
             if list(self.classifier.findings) != list(cfg["finetune"]["data"].get("target_findings", DEFAULT_TARGET_FINDINGS)):
                 raise ValueError("classifier findings differ from finetune.data.target_findings")
 
+    def frozen_checksum(self) -> float:
+        """Sum of every frozen parameter (U-Net outside the trainable attention subset, VAE, text encoder): must not change."""
+        names = set(self.trainable_names)
+        with torch.no_grad():
+            total = sum(p.double().sum() for n, p in self.unet.named_parameters() if n not in names)
+            total = total + sum(p.double().sum() for p in self.vae.parameters()) + sum(p.double().sum() for p in self.text_encoder.parameters())
+        return float(total)
+
     def _autocast(self):
         return torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=self.use_amp)
 
-    def micro_losses(self, batch: Dict, gen: torch.Generator):
-        """Returns (l_diff, l_dis_or_None, n_selected). Draw order from `gen` is fixed (latent eps, noise, t) in every
-        arm. l_dis has a graph iff the disease term is enabled with weight > 0."""
+    def micro_losses(self, batch: Dict, gen: torch.Generator) -> Losses:
+        """Draw order from `gen` is fixed (latent eps, noise, t) in every arm. l_dis / l_pres have a graph iff their term is
+        enabled with weight > 0 (weight 0 = log-only: no graph, identical updates to the arm without the term)."""
         dev = self.device
         img = batch["image"].to(dev)
         with torch.no_grad(), self._autocast():
@@ -163,7 +192,7 @@ class Finetuner:
             noise_pred = self.unet(noisy, t, ehs).sample
         l_diff = F.mse_loss(noise_pred.float(), noise)
 
-        l_dis, n_sel = None, 0
+        l_dis, l_pres, n_sel = None, None, 0
         if self.dis_enabled:
             sel = (t < self.t_max).nonzero(as_tuple=True)[0]
             n_sel = int(sel.numel())
@@ -171,35 +200,60 @@ class Finetuner:
                 a = self.alphas_cumprod[t[sel]].view(-1, 1, 1, 1)
                 x0 = (noisy[sel] - (1 - a).sqrt() * noise_pred[sel].float()) / a.sqrt()
                 labels, mask = batch["labels"].to(dev)[sel], batch["mask"].to(dev)[sel]
-                grad_on = self.dis_weight > 0   # weight 0 = log-only: no graph, same updates as A
+                grad_on = self.dis_weight > 0 or (self.anat_enabled and self.anat_weight > 0)
                 with torch.set_grad_enabled(grad_on), self._autocast():
                     image_hat = self.vae.decode(x0 / self.vae.config.scaling_factor).sample
-                    logits = self.classifier.logits(image_hat)
+                    if self.anat_enabled:
+                        logits, feats_hat = self.classifier.forward_with_features(image_hat, self.anat_layers)
+                    else:
+                        logits = self.classifier.logits(image_hat)
                 l_dis = disease_consistency_loss(logits, labels, mask)
-        return l_diff, l_dis, n_sel
-
+                if self.anat_enabled:
+                    with torch.no_grad(), self._autocast():
+                        _, feats_orig = self.classifier.forward_with_features(img[sel], self.anat_layers)   # the real image, no graph
+                    l_pres = anatomical_distance(feats_hat, feats_orig)
+        return Losses(l_diff, l_dis, l_pres, n_sel)
 
     def grad_diagnostics(self, batches, gen: torch.Generator, loss_scale: float = 128.0) -> Dict:
-        """Raw gradient norms over the trainable parameters of L_diffusion and of the (unweighted) L_disease on the same
-        micro-batches and the same noise/timesteps (two forward passes, generator state restored in between). Separate data
-        and generator from training, so the training stream is untouched. loss_scale guards fp16 backward underflow."""
+        """Raw gradient norms over the trainable parameters of L_diffusion, of the (unweighted) L_disease and, for experiment C, of
+        the (unweighted) L_preserve, on the same micro-batches and the same noise/timesteps (one forward pass per term, generator
+        state restored in between). Separate data and generator from training, so the training stream is untouched. loss_scale
+        guards fp16 backward underflow. Also reports the share of trainable tensors that receive a non-zero gradient from each term."""
+        def norm_and_cover(gs):
+            sq = sum((g.float() ** 2).sum() for g in gs if g is not None)
+            covered = sum(int(g.float().abs().sum() > 0) for g in gs if g is not None)
+            return float(torch.sqrt(sq)) / loss_scale, covered / max(len(gs), 1)
+
         rows = []
         for batch in batches:
-            state = gen.get_state()
-            l_diff, _, _ = self.micro_losses(batch, gen)
-            g1 = torch.autograd.grad(l_diff * loss_scale, self.params, allow_unused=True)
-            gen.set_state(state)
-            _, l_dis, n_sel = self.micro_losses(batch, gen)
-            if l_dis is None or not l_dis.requires_grad or n_sel == 0:
-                continue
-            g2 = torch.autograd.grad(l_dis * loss_scale, self.params, allow_unused=True)
-            norm = lambda gs: float(torch.sqrt(sum((g.float() ** 2).sum() for g in gs if g is not None))) / loss_scale  # noqa: E731
-            rows.append({"norm_l_diff": norm(g1), "norm_l_dis_raw": norm(g2), "n_dis_samples": n_sel})
+            row, state, ok = {}, gen.get_state(), True
+            for term in ("diff", "dis", "pres"):
+                if term == "pres" and not self.anat_enabled:
+                    continue
+                gen.set_state(state)
+                out = self.micro_losses(batch, gen)
+                loss = {"diff": out.l_diff, "dis": out.l_dis, "pres": out.l_pres}[term]
+                if loss is None or not loss.requires_grad or (term != "diff" and out.n_sel == 0):
+                    ok = False
+                    break
+                g = torch.autograd.grad(loss * loss_scale, self.params, allow_unused=True)
+                row[f"norm_l_{term}"], row[f"param_coverage_l_{term}"] = norm_and_cover(g)
+                row["n_dis_samples"] = out.n_sel
+            if ok and row:
+                rows.append(row)
         if not rows:
             return {"batches": 0}
-        nd, nz = float(np.mean([r["norm_l_diff"] for r in rows])), float(np.mean([r["norm_l_dis_raw"] for r in rows]))
-        return {"batches": len(rows), "mean_norm_l_diff": nd, "mean_norm_l_dis_raw": nz, "raw_ratio_dis_over_diff": nz / nd if nd else None,
-                "weighted_ratio_at_lambda": (self.dis_weight * nz / nd) if nd else None, "lambda": self.dis_weight, "per_batch": rows}
+        mean = lambda k: float(np.mean([r[k] for r in rows if k in r])) if any(k in r for r in rows) else None  # noqa: E731
+        nd, nz, npres = mean("norm_l_diff"), mean("norm_l_dis"), mean("norm_l_pres")
+        cov = {k[len("param_coverage_l_"):]: mean(k) for k in ("param_coverage_l_diff", "param_coverage_l_dis", "param_coverage_l_pres")}
+        out = {"batches": len(rows), "mean_norm_l_diff": nd, "mean_norm_l_dis_raw": nz, "raw_ratio_dis_over_diff": nz / nd if nd else None,
+               "weighted_ratio_at_lambda": (self.dis_weight * nz / nd) if nd else None, "lambda": self.dis_weight,
+               "param_coverage": {k: v for k, v in cov.items() if v is not None}, "per_batch": rows}
+        if npres is not None:
+            out.update({"mean_norm_l_pres_raw": npres, "raw_ratio_dis_over_pres": nz / npres if npres else None,
+                        "lambda2_balance_suggestion": (self.dis_weight * nz / npres) if npres else None,
+                        "weighted_ratio_pres_over_diff_at_lambda2": (self.anat_weight * npres / nd) if nd else None, "lambda2": self.anat_weight})
+        return out
 
 
 def finetune(cfg: Dict, run_dir: Path, restored_last: Optional[Path] = None) -> Dict:
@@ -225,9 +279,11 @@ def finetune(cfg: Dict, run_dir: Path, restored_last: Optional[Path] = None) -> 
     logger.info("native image sizes of the first %d training images (resized to %d): %s", len(native_sizes), ds.resolution, native_sizes[:5])
 
     tr = Finetuner(cfg, device)
+    frozen_before = tr.frozen_checksum()
     micro, accum, max_steps = int(ft.get("micro_batch", 2)), int(ft.get("grad_accum", 4)), int(ft["max_steps"])
-    logger.info("trainable: %.1fM of %.1fM U-Net parameters | micro_batch=%d accum=%d steps=%d | amp=%s | disease=%s (weight=%s, t<%d)",
-                tr.n_trainable / 1e6, tr.n_total / 1e6, micro, accum, max_steps, tr.use_amp, tr.dis_enabled, tr.dis_weight, tr.t_max)
+    logger.info("trainable: %.1fM of %.1fM U-Net parameters | micro_batch=%d accum=%d steps=%d | amp=%s | disease=%s (weight=%s, t<%d) | anatomy=%s (weight=%s)",
+                tr.n_trainable / 1e6, tr.n_total / 1e6, micro, accum, max_steps, tr.use_amp, tr.dis_enabled, tr.dis_weight, tr.t_max,
+                tr.anat_enabled, tr.anat_weight)
     optim = torch.optim.AdamW(tr.params, lr=float(ft.get("lr", 2e-5)), betas=(0.9, 0.999),
                               weight_decay=float(ft.get("weight_decay", 0.01)), eps=1e-8)
     scaler = torch.amp.GradScaler("cuda", enabled=tr.use_amp)
@@ -270,17 +326,20 @@ def finetune(cfg: Dict, run_dir: Path, restored_last: Optional[Path] = None) -> 
     for step in range(step0, max_steps):
         t0 = time.time()
         optim.zero_grad(set_to_none=True)
-        sums = {"l_diff": 0.0, "l_dis": 0.0, "n_dis_micro": 0, "n_sel": 0}
+        sums = {"l_diff": 0.0, "l_dis": 0.0, "l_pres": 0.0, "n_dis_micro": 0, "n_sel": 0}
         for _ in range(accum):
             batch = next(it)
-            l_diff, l_dis, n_sel = tr.micro_losses(batch, gen)
+            l_diff, l_dis, l_pres, n_sel = tr.micro_losses(batch, gen)
             loss = l_diff
             if l_dis is not None and tr.dis_weight > 0:
                 loss = loss + tr.dis_weight * l_dis
+            if l_pres is not None and tr.anat_weight > 0:
+                loss = loss + tr.anat_weight * l_pres
             scaler.scale(loss / accum).backward()
             sums["l_diff"] += float(l_diff.detach())
             if l_dis is not None and n_sel:
                 sums["l_dis"] += float(l_dis.detach())
+                sums["l_pres"] += float(l_pres.detach()) if l_pres is not None else 0.0
                 sums["n_dis_micro"] += 1
             sums["n_sel"] += n_sel
         scaler.unscale_(optim)
@@ -292,14 +351,16 @@ def finetune(cfg: Dict, run_dir: Path, restored_last: Optional[Path] = None) -> 
         skipped = bool(scaler.get_scale() < scale_before)   # fp16 overflow: the scaler dropped this whole update
         row = {"step": step + 1, "skipped": skipped, "scale": scaler.get_scale(), "clipped": bool(gnorm > max_norm), "l_diff": sums["l_diff"] / accum,
                "l_dis": (sums["l_dis"] / sums["n_dis_micro"]) if sums["n_dis_micro"] else None,
+               "l_pres": (sums["l_pres"] / sums["n_dis_micro"]) if (sums["n_dis_micro"] and tr.anat_enabled) else None,
                "n_dis_samples": sums["n_sel"], "grad_norm": gnorm, "seconds": round(time.time() - t0, 3),
                "peak_gb": round(torch.cuda.max_memory_allocated(device) / 1e9, 2) if device.type == "cuda" else None}
         rows.append(row)
         with open(metrics_path, "a") as f:
             f.write(json.dumps(row) + "\n")
         if (step + 1) % int(ft.get("log_every", 5)) == 0 or step + 1 == max_steps:
-            logger.info("step %d/%d l_diff=%.4f l_dis=%s grad_norm=%.3f %.1fs/step peak=%s GB", step + 1, max_steps, row["l_diff"],
-                        "-" if row["l_dis"] is None else f"{row['l_dis']:.4f}", gnorm, row["seconds"], row["peak_gb"])
+            logger.info("step %d/%d l_diff=%.4f l_dis=%s l_pres=%s grad_norm=%.3f %.1fs/step peak=%s GB", step + 1, max_steps, row["l_diff"],
+                        "-" if row["l_dis"] is None else f"{row['l_dis']:.4f}", "-" if row["l_pres"] is None else f"{row['l_pres']:.4f}",
+                        gnorm, row["seconds"], row["peak_gb"])
         if (step + 1) % int(ft.get("save_every", 50)) == 0 and step + 1 < max_steps:
             save_resume(step + 1)
     save_resume(max_steps)
@@ -312,6 +373,9 @@ def finetune(cfg: Dict, run_dir: Path, restored_last: Optional[Path] = None) -> 
     save_file(delta, str(delta_path))
     if tr.classifier is not None:
         tr.classifier.assert_unchanged()
+    frozen_after = tr.frozen_checksum()
+    if frozen_after != frozen_before:
+        raise RuntimeError(f"a frozen component (non-attention U-Net weights, VAE or text encoder) changed during training: {frozen_before} -> {frozen_after}")
     w = max(1, min(10, len(rows)))
     mean = lambda key, rs: (float(np.mean([r[key] for r in rs if r[key] is not None])) if any(r[key] is not None for r in rs) else None)  # noqa: E731
     results = {
@@ -322,6 +386,8 @@ def finetune(cfg: Dict, run_dir: Path, restored_last: Optional[Path] = None) -> 
         "peak_gpu_gb": rows[-1]["peak_gb"] if rows else None,
         "l_diff_first_window": mean("l_diff", rows[:w]), "l_diff_last_window": mean("l_diff", rows[-w:]),
         "l_dis_first_window": mean("l_dis", rows[:w]), "l_dis_last_window": mean("l_dis", rows[-w:]),
+        "l_pres_first_window": mean("l_pres", rows[:w]), "l_pres_last_window": mean("l_pres", rows[-w:]),
+        "frozen_components_unchanged": True,
         "skipped_steps": int(sum(r["skipped"] for r in rows)),
         "skipped_fraction_after_step5": (float(np.mean([r["skipped"] for r in rows if r["step"] > 5])) if any(r["step"] > 5 for r in rows) else None),
         "clip_fraction": float(np.mean([r["clipped"] for r in rows])) if rows else None,
@@ -330,6 +396,7 @@ def finetune(cfg: Dict, run_dir: Path, restored_last: Optional[Path] = None) -> 
         "disease": {"enabled": tr.dis_enabled, "weight": tr.dis_weight, "t_max": tr.t_max,
                     "classifier_sha256": tr.classifier.sha256 if tr.classifier else None,
                     "classifier_unchanged_after_training": True if tr.classifier else None},
+        "anatomy": {"enabled": tr.anat_enabled, "weight": tr.anat_weight, "layers": list(tr.anat_layers) if tr.anat_enabled else None},
     }
     if results["l_dis_first_window"]:
         # rule for lambda1 (docs/PHASE_6_DISEASE_CONSISTENCY.md): ratio of the two raw losses at initialisation

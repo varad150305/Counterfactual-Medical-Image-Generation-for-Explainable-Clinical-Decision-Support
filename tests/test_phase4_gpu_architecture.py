@@ -95,14 +95,13 @@ class TestExperimentConfigs:
             assert spec["id"] == exp_id
             assert {k for k, v in spec["losses"].items() if v["enabled"]} == enabled
 
-    def test_baseline_is_runnable_b_needs_lambda_and_c_refuses_until_phase7(self):
+    def test_baseline_and_b_are_runnable_and_c_needs_its_lambda2(self):
         from src.utils.experiment import ExperimentConfigError, assert_runnable, validate_experiment_config
 
         assert_runnable(validate_experiment_config(self._load("baseline")))
-        # Phase 6: B's loss exists, but lambda1 must be set (by the pre-registered rule) before B can run
+        assert_runnable(validate_experiment_config(self._load("disease_consistency")))     # Phase 6: lambda1 = 0.5 recorded
+        # Phase 7: C's loss exists, but lambda2 must be set (by the pre-registered rule) before C can run
         with pytest.raises(ExperimentConfigError, match="weight must be set"):
-            assert_runnable(validate_experiment_config(self._load("disease_consistency")))
-        with pytest.raises(NotImplementedError, match="Phase 7"):
             assert_runnable(validate_experiment_config(self._load("anatomy_consistency")))
 
     def test_baseline_changes_only_the_documented_settings_vs_the_phase3_config(self):
@@ -116,8 +115,8 @@ class TestExperimentConfigs:
         assert changed == {"image_size", "num_ddim_steps", "num_inner_steps", "self_replace_steps"}
         assert a["editing"]["self_replace_steps"] == 0.2
 
-    def test_b_and_c_lambdas_are_unset_not_invented(self):
-        assert self._load("disease_consistency")["losses"]["disease_consistency"]["weight"] is None
+    def test_lambda1_is_the_recorded_phase6_value_and_lambda2_is_unset_not_invented(self):
+        assert self._load("disease_consistency")["losses"]["disease_consistency"]["weight"] == 0.5   # Phase 6 rule R2 result, fixed for Phase 7
         assert self._load("anatomy_consistency")["losses"]["anatomy_preservation"]["weight"] is None
 
     def test_validation_errors(self):
@@ -204,12 +203,12 @@ class TestRunExperiment:
         assert '"A_prism_baseline"' in capsys.readouterr().out
         assert list(tmp_path.iterdir()) == []
 
-    @pytest.mark.parametrize("cfg,exc", [("disease_consistency", "ExperimentConfigError"), ("anatomy_consistency", "NotImplementedError")])
-    def test_b_and_c_fail_fast_without_creating_a_run_dir(self, tmp_path, cfg, exc):
+    @pytest.mark.parametrize("cfg", ["anatomy_consistency"])
+    def test_c_fails_fast_without_lambda2_and_creates_no_run_dir(self, tmp_path, cfg):
         from src.utils.experiment import ExperimentConfigError
 
         run = load_script("run_experiment")
-        with pytest.raises({"ExperimentConfigError": ExperimentConfigError, "NotImplementedError": NotImplementedError}[exc]):
+        with pytest.raises(ExperimentConfigError):
             run.main(["--config", str(REPO / "configs" / f"{cfg}.yaml"), "--run-root", str(tmp_path)])
         assert list(tmp_path.iterdir()) == []
 

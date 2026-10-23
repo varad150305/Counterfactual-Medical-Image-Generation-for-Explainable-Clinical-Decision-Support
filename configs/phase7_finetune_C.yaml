@@ -1,0 +1,6 @@
+# Phase 7 arm C: identical recipe to phase6_finetune_B.yaml (lambda1 = 0.5 fixed) + lambda2 * L_preserve (weight set by the pre-registered rule).
+extends: anatomy_consistency.yaml
+task: diffusion_finetune
+experiment:
+  id: C
+  name: phase7_C

@@ -1,7 +1,11 @@
 # Experiment C — PRISM + disease consistency + anatomical preservation:
 #   L = L_diffusion + lambda1 * L_disease + lambda2 * L_preserve
-# Structure only. L_preserve is implemented in Phase 7; until then this config is refused at
-# run time. lambda2 intentionally unset (null).
+# Everything except the anatomy loss is inherited from disease_consistency.yaml (B, lambda1 = 0.5 fixed) and baseline.yaml, so
+# B and C differ ONLY in the losses.anatomy_preservation block (tests/test_phase7_anatomy.py).
+#
+# lambda2 (weight) is null until the pre-registered rule of docs/PHASE_7_ANATOMICAL_PRESERVATION.md is applied to the Phase 7
+# smoke run (gradient-norm balance of lambda2*L_preserve against lambda1*L_disease at initialisation); the Phase 7 notebook applies
+# it automatically and passes the value with --set. assert_runnable refuses to run C while the weight is null.
 extends: disease_consistency.yaml
 
 experiment:

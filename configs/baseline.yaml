@@ -67,5 +67,7 @@ finetune:
   save_every: 50
   log_every: 5
   diagnostics: {grad_batches: 3}   # B only: separate gradient norms of L_diffusion and L_disease on 3 held-aside batches before training
+  anatomy:
+    layers: [denseblock1, denseblock2]   # Phase 7 (experiment C only): frozen-classifier blocks used as the anatomy feature extractor F
   disease:
     t_max: 500                 # L_disease only on samples with t < t_max (x0_hat is uninformative at high noise)

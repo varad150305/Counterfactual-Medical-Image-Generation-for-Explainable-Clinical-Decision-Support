@@ -8,6 +8,10 @@
       B2 median PSNR(recon, cf) not more than 1 dB below A-ft, median fraction changed not more than 0.05 above, |median brightness shift| < 5 ;
       B3 mean |dp| of the non-target findings (Pneumonia, Pleural Effusion) not more than 0.05 above A-ft ; B4 median CLIP directional not more than 0.02 below A-ft
       (+ a manual visual check for artifacts, recorded by the reviewer; this script cannot make it).
+  Phase 7 (experiment C, docs/PHASE_7_ANATOMICAL_PRESERVATION.md section 4): the SAME four rules applied to C versus A-ft, named
+      C1 preservation (= B2), C2 effect (= B1), C3 non-target stability (= B3), C4 CLIP (= B4 automatic part), plus
+      C5 collapse proxy: at most 2 of the 24 edits with PSNR(recon, cf) < 20 dB (B had 24 of 24, A-ft 0; the proxy for the
+      bright-mass / dot-pattern collapse) and a manual visual review. C versus B paired differences are reported for information.
 The script reports the rule outcomes literally; the verdict wording (PASS/PARTIAL/BLOCKED) is applied in the document.
 """
 import argparse
@@ -34,6 +38,10 @@ def meaningful_edit(df: pd.DataFrame) -> dict:
 
 def paired(a: pd.DataFrame, b: pd.DataFrame, col: str, n_boot: int = 10000, seed: int = 0) -> dict:
     """b - a, paired on `index`; bootstrap (over images) 95 % CI of the mean difference."""
+    if "image" in a.columns and "image" in b.columns:   # every arm must have been scored on the same images
+        pair = a[["index", "image"]].merge(b[["index", "image"]], on="index", suffixes=("_a", "_b"))
+        if len(pair) != len(a) or len(pair) != len(b) or not (pair["image_a"] == pair["image_b"]).all():
+            raise ValueError("arms were not evaluated on the same images (index/image mismatch)")
     m = a[["index", col]].merge(b[["index", col]], on="index", suffixes=("_a", "_b"))
     d = (m[f"{col}_b"] - m[f"{col}_a"]).to_numpy()
     rs = np.random.RandomState(seed)
@@ -59,16 +67,44 @@ def b_vs_aft(b: pd.DataFrame, a: pd.DataFrame) -> dict:
     return r
 
 
+COLLAPSE_PSNR_DB = 20.0
+MAX_COLLAPSED_IMAGES = 2
+
+
+def c_vs_aft(c: pd.DataFrame, a: pd.DataFrame) -> dict:
+    """Phase 7 rules for experiment C (same thresholds as B1-B4, renamed) + the collapse proxy."""
+    b = b_vs_aft(c, a)
+    r = {"C1_preservation": b["B2_preservation"], "C2_effect": b["B1_effect"], "C3_non_target_stability": b["B3_non_target_stability"],
+         "C4_clip_directional": b["B4_clip_directional"],
+         "C5_collapse_proxy_le_2_images_below_20dB": bool(int((c["psnr_recon_cf"] < COLLAPSE_PSNR_DB).sum()) <= MAX_COLLAPSED_IMAGES),
+         "collapsed_images_below_20dB": int((c["psnr_recon_cf"] < COLLAPSE_PSNR_DB).sum()),
+         "visual_check": "MANUAL (reviewer must record, over all images: are the bright-mass / dot-pattern artifacts of B reduced?)"}
+    r["all_automatic_rules_hold"] = all(v for k, v in r.items() if isinstance(v, bool))
+    r["paired_dp_target_C_minus_A_ft"] = b["paired_dp_target_B_minus_A_ft"]
+    r["paired_other_metrics_C_minus_A_ft"] = b["paired_other_metrics_B_minus_A_ft"]
+    return r
+
+
+def c_vs_b(c: pd.DataFrame, b: pd.DataFrame) -> dict:
+    """For information: how C differs from B on the same images (artifact reduction vs. effect lost)."""
+    return {col: paired(b, c, col) for col in ("dp_target", "psnr_recon_cf", "ssim_recon_cf", "change_frac_changed_gt20",
+                                                "change_brightness_shift", "clip_directional", "dp_nonTarget_abs_mean", "psnr_orig_recon")}
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--A0"), ap.add_argument("--A-ft", dest="a_ft"), ap.add_argument("--B"), ap.add_argument("--out", required=True)
+    ap.add_argument("--A0"), ap.add_argument("--A-ft", dest="a_ft"), ap.add_argument("--B"), ap.add_argument("--C"), ap.add_argument("--out", required=True)
     args = ap.parse_args(argv)
-    dfs = {k: pd.read_csv(v) for k, v in (("A0", args.A0), ("A_ft", args.a_ft), ("B", args.B)) if v}
+    dfs = {k: pd.read_csv(v) for k, v in (("A0", args.A0), ("A_ft", args.a_ft), ("B", args.B), ("C", args.C)) if v}
     out = {"arms": {k: len(v) for k, v in dfs.items()}, "meaningful_edit": {k: meaningful_edit(v) for k, v in dfs.items() if k in ("A0", "A_ft")}}
     if "A_ft" in dfs and "A0" in dfs:
         out["paired_A_ft_minus_A0_dp_target"] = paired(dfs["A0"], dfs["A_ft"], "dp_target")
     if "B" in dfs and "A_ft" in dfs:
         out["B_vs_A_ft"] = b_vs_aft(dfs["B"], dfs["A_ft"])
+    if "C" in dfs and "A_ft" in dfs:
+        out["C_vs_A_ft"] = c_vs_aft(dfs["C"], dfs["A_ft"])
+    if "C" in dfs and "B" in dfs:
+        out["C_vs_B_paired"] = c_vs_b(dfs["C"], dfs["B"])
     Path(args.out).write_text(json.dumps(out, indent=2))
     print(json.dumps(out, indent=2))
     return 0

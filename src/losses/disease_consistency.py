@@ -72,6 +72,18 @@ class FrozenClassifier(nn.Module):
         """Differentiable w.r.t. the image (do NOT call under torch.no_grad when the loss is needed)."""
         return self.net(self.preprocess(image_m11))
 
+    def forward_with_features(self, image_m11: torch.Tensor, layers=("denseblock1", "denseblock2")):
+        """Phase 7: the same computation as `logits` (identical numbers) that also returns the activations of the named
+        DenseNet blocks, for the anatomical-preservation distance."""
+        x = self.preprocess(image_m11)
+        feats = []
+        for name, module in self.net.backbone.features.named_children():
+            x = module(x)
+            if name in layers:
+                feats.append(x)
+        out = F.adaptive_avg_pool2d(F.relu(x), (1, 1)).flatten(1)
+        return self.net.backbone.classifier(out), feats
+
     def params_checksum(self) -> float:
         with torch.no_grad():
             return float(sum(p.double().sum() for p in self.net.parameters()) + sum(b.double().sum() for b in self.net.buffers()))
@@ -80,6 +92,23 @@ class FrozenClassifier(nn.Module):
         now = self.params_checksum()
         if now != self.params_checksum_at_load:
             raise RuntimeError(f"frozen classifier changed during the run (checksum {self.params_checksum_at_load} -> {now})")
+
+
+# Phase 7: anatomical-preservation features (FrozenClassifier.forward_with_features). The frozen classifier's early/mid DenseNet blocks respond to edges, ribs and
+# lung/heart texture (anatomical structure) rather than to the final pathology decision; no new model is introduced.
+ANATOMY_LAYERS = ("denseblock1", "denseblock2")
+
+
+def anatomical_distance(feats_a, feats_b) -> torch.Tensor:
+    """L_preserve = D(F(original), F(generated)): LPIPS-style distance between feature maps — unit-normalise each spatial
+    feature vector across channels, mean squared difference, averaged over space and layers. 0 iff identical features;
+    differentiable w.r.t. both inputs (the original's features are computed without a graph by the caller)."""
+    ds = []
+    for a, b in zip(feats_a, feats_b):
+        na = a / (a.float().pow(2).sum(1, keepdim=True).sqrt() + 1e-8)
+        nb = b / (b.float().pow(2).sum(1, keepdim=True).sqrt() + 1e-8)
+        ds.append((na.float() - nb.float()).pow(2).sum(1).mean())
+    return torch.stack(ds).mean()
 
 
 def disease_consistency_loss(logits: torch.Tensor, labels: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
