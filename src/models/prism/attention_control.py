@@ -46,7 +46,8 @@ class AttentionControl(abc.ABC):
         # guidance doubling, see ptp_utils.diffusion_step) — only the cond
         # half is subject to editing control.
         h = attn.shape[0]
-        attn = attn.clone()
+        # `attn` is a fresh tensor from get_attention_scores() that the caller only uses via our return value, so it is
+        # modified in place (a defensive full clone cost ~2 GB per 64x64-latent layer at 512 px on a T4).
         attn[h // 2 :] = self.forward(attn[h // 2 :], is_cross, place_in_unet)
         self.cur_att_layer += 1
         if self.num_att_layers > 0 and self.cur_att_layer == self.num_att_layers:

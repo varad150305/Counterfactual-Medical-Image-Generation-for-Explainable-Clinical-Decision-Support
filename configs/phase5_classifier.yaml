@@ -1,0 +1,19 @@
+# Phase 5 gate (b), Lean path: DenseNet121 multi-label classifier on REAL CheXpert (frontal views),
+# patient-level 70/15/15 split, uncertain-label policy `ignore` (both as planned in Phase 2).
+# csv_path/image_root are filled in by scripts/locate_chexpert.py -> generated_classifier.yaml.
+# Lean subset: 100k randomly sampled frontal images (seeded), 4 epochs; AMP on the T4.
+extends: classifier_chexpert_baseline.yaml
+
+task: classifier_train
+
+data:
+  frontal_only: true
+  max_samples: 100000
+  image_size: 224
+
+training:
+  epochs: 4
+  batch_size: 64
+  num_workers: 4
+  device: cuda
+  amp: true

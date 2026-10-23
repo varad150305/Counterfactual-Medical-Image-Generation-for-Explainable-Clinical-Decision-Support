@@ -6,9 +6,9 @@ Experiments (CLAUDE.md section 8 of the research plan):
   B  + disease consistency                  L = L_diffusion + lambda1 * L_disease
   C  + anatomical preservation              L = L_diffusion + lambda1 * L_disease + lambda2 * L_preserve
 
-Only A can run today. B/C configs exist and validate structurally, but running
-them raises NotImplementedError until their losses are implemented (Phases 6
-and 7) — nothing here fakes a loss.
+A and B can run (B's L_disease is implemented in Phase 6: src/losses/disease_consistency.py); C's config
+validates structurally but running it raises NotImplementedError until L_preserve exists (Phase 7) — nothing
+here fakes a loss.
 """
 import hashlib
 import json
@@ -23,7 +23,7 @@ from src.utils.environment import get_git_info
 # loss name -> (implemented?, phase that implements it)
 LOSSES = {
     "diffusion": (True, "existing"),
-    "disease_consistency": (False, "Phase 6"),
+    "disease_consistency": (True, "Phase 6"),
     "anatomy_preservation": (False, "Phase 7"),
 }
 
@@ -74,7 +74,7 @@ def assert_runnable(spec: Dict[str, Any]) -> None:
         detail = ", ".join(f"{n} (implemented in {phase})" for n, phase in missing)
         raise NotImplementedError(
             f"Experiment {spec['name']!r} enables loss(es) that are not implemented yet: {detail}. "
-            f"Only the baseline (losses.diffusion only) can run in the current phase."
+            f"Only experiments A (diffusion) and B (+ disease consistency) can run in the current phase."
         )
     for n, b in spec["losses"].items():
         if b["enabled"] and b["weight"] is None:

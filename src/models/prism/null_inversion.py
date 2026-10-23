@@ -55,6 +55,11 @@ class NullInversion:
         self.num_ddim_steps = num_ddim_steps
         self.guidance_scale = guidance_scale
         self.model.scheduler.set_timesteps(num_ddim_steps)
+        # Only the null-text *embedding* is optimised. Pipeline weights load with requires_grad=True, which would make
+        # every inner backward also compute (and store) gradients for all ~860M UNet parameters (+3.4 GB, extra compute).
+        # Freezing leaves the embedding gradient identical (tests/test_phase5_prep.py::test_freezing_weights_does_not_change_inversion).
+        for module in (model.unet, model.vae, model.text_encoder):
+            module.requires_grad_(False)
         # UNet2DConditionModel is fully convolutional and works at any
         # resolution divisible by its total downsampling factor — the
         # config's sample_size is just SD's trained default (512 for v1.5),

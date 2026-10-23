@@ -68,7 +68,7 @@ def step_classifier_fwd_bwd(ctx):
     opt.step()
     _sync(device)
     assert torch.isfinite(loss).item(), "non-finite loss"
-    out = {"loss": float(loss), "seconds": round(time.time() - t0, 2), "param_device": str(next(model.parameters()).device)}
+    out = {"loss": float(loss.detach()), "seconds": round(time.time() - t0, 2), "param_device": str(next(model.parameters()).device)}
     if device.type == "cuda":
         out["peak_mem_gb"] = round(torch.cuda.max_memory_allocated() / 1e9, 2)
     return out
@@ -192,6 +192,8 @@ def main(argv=None) -> int:
                                      "error": f"{type(e).__name__}: {e}", "traceback": traceback.format_exc()}
         print(f"[{report['steps'][name]['status']:>6}] {name} ({report['steps'][name]['seconds']}s)"
               + (f" - {report['steps'][name].get('error', '')}" if report['steps'][name]["status"] == "failed" else ""))
+        if report["steps"][name]["status"] == "failed":  # put the traceback in the log itself, not only in the JSON
+            print(report["steps"][name]["traceback"], flush=True)
 
     all_passed = all(s["status"] == "passed" for s in report["steps"].values())
     any_failed = any(s["status"] == "failed" for s in report["steps"].values())

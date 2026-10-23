@@ -1,7 +1,10 @@
 # Experiment B — PRISM + disease consistency:  L = L_diffusion + lambda1 * L_disease
-# Structure only. L_disease is implemented in Phase 6; until then scripts/run_experiment.py
-# refuses to run this config (NotImplementedError). lambda1 is intentionally unset (null):
-# choosing it is part of Phase 6, not a Phase 4 decision.
+# Everything else (data, recipe, steps, lr, seed, editing settings) is inherited from baseline.yaml, so A and B
+# differ ONLY in this loss block (tests/test_phase6_disease.py::test_a_and_b_configs_differ_only_in_the_loss_block).
+#
+# lambda1 (weight) is null until the pre-registered rule is applied to the Phase 6 smoke run:
+#   lambda1 = round_1_sig( mean L_diffusion / mean L_disease over the first 10 steps at initialisation )
+# (docs/PHASE_6_DISEASE_CONSISTENCY.md). assert_runnable refuses to run B while the weight is null.
 extends: baseline.yaml
 
 experiment:
@@ -11,6 +14,7 @@ experiment:
 losses:
   disease_consistency: {enabled: true, weight: null}   # lambda1
 
-# Frozen independent classifier used by L_disease. Must be the *real-data* classifier from
-# the Phase 5 gate; the synthetic Phase 2 checkpoint is not a valid research classifier.
+# Frozen independent classifier used by L_disease: the Phase 5b real-data DenseNet121 (best.pt). Loading refuses a hash mismatch.
+# classifier_checkpoint is filled in by scripts/make_phase6_inputs.py (the file is a Kaggle input, not in the repo).
 classifier_checkpoint: null
+classifier_sha256: d14a9e87519e80803449cdeb2cf550a08b4508f52587d3767aa967f8cb51763a

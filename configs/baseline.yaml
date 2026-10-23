@@ -1,11 +1,11 @@
 # Experiment A — PRISM baseline:  L = L_diffusion
-# Extends the Phase 3 inference config; behaviour is unchanged (same editing/model/evaluation
-# keys). Adds the experiment/loss blocks and the list of counterfactual requests that
-# scripts/run_experiment.py executes.
+# Extends the Phase 3 inference config. Since Phase 6 this file carries the settings validated at the Phase 5
+# gate (GPU, 512 px, 30 DDIM steps, 5 inner null-text steps) instead of the CPU defaults of prism_baseline.yaml,
+# so A / B / C (which extend this file) can never silently run at the wrong settings.
 #
-# NOTE: the Phase 3 reconstruction has not yet been shown to perform the requested edit
-# (docs/PHASE_3_PRISM_BASELINE.md); the default input below is a SYNTHETIC image used only
-# for pipeline validation. Real-image runs are Phase 5.
+# Phase 5 gate 5a calibrated ONE image (add Cardiomegaly): self_replace_steps 0.0 gave the strongest edit but sits
+# near the preservation limit; 0.2 is the initial operating point for Phase 6 (docs/PHASE_6_DISEASE_CONSISTENCY.md).
+# The default input below is a SYNTHETIC image used only for pipeline validation.
 extends: prism_baseline.yaml
 
 experiment:
@@ -14,6 +14,16 @@ experiment:
 
 task: counterfactual
 seed: 42
+
+model:
+  device: cuda
+
+editing:
+  image_size: 512
+  num_ddim_steps: 30
+  num_inner_steps: 5
+  self_replace_steps: 0.2
+  # cross_replace_steps 0.8, edit_word_weight 2.0, guidance_scale 7.5, local_blend true, seed 42: inherited, same as Phase 5
 
 losses:
   diffusion: {enabled: true, weight: 1.0}
@@ -27,3 +37,35 @@ inputs:
 
 output:
   run_root: experiments   # runs go to <run_root>/<experiment.name>/<run_id>/
+
+# Phase 6 fine-tuning recipe, SHARED by A and B (B extends this file), so the arms differ only in `losses`.
+# data.csv_path / image_root are filled in by scripts/make_phase6_inputs.py (generated_phase6_*.yaml).
+finetune:
+  data:
+    csv_path: null
+    image_root: null
+    target_findings: [No Finding, Pneumonia, Pleural Effusion, Cardiomegaly]
+    uncertain_policy: ignore
+    frontal_only: true
+    max_samples: 100000        # the Phase 5b subset ...
+    split: {train: 0.70, val: 0.15, test: 0.15, seed: 42}   # ... and patient-level split, reproduced exactly
+    subset_seed: 42
+    use_split: val             # fine-tune on val-split patients: the frozen classifier never trained on them; test patients are refused
+  max_images: null
+  resolution: 512
+  micro_batch: 2
+  grad_accum: 4
+  max_steps: 300               # optimizer steps; set from the smoke run's measured s/step (docs/PHASE_6_DISEASE_CONSISTENCY.md)
+  lr: 0.00002                  # 2x PRISM's 1e-5 because the run is ~hundreds of steps, not 100 epochs; identical for A and B
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  trainable: attention         # attn1 + attn2 projections (93.5M of 859.5M); full AdamW fine-tuning does not fit a T4
+  gradient_checkpointing: true
+  vae_gradient_checkpointing: true
+  amp: true
+  num_workers: 2
+  save_every: 50
+  log_every: 5
+  diagnostics: {grad_batches: 3}   # B only: separate gradient norms of L_diffusion and L_disease on 3 held-aside batches before training
+  disease:
+    t_max: 500                 # L_disease only on samples with t < t_max (x0_hat is uninformative at high noise)

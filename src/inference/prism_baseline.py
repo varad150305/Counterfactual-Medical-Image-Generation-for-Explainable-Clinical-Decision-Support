@@ -94,6 +94,10 @@ class PrismCounterfactualGenerator:
         self.device = resolve_device(model_cfg.get("device", "cpu"))  # raises if cuda requested but unavailable
         self.editing_cfg = editing_cfg
 
+        # content hash of the Phase 6 weight overlay is part of the inversion-cache key (two arms must never share an inversion)
+        from src.losses.disease_consistency import file_sha256
+
+        self._delta_sha256 = file_sha256(model_cfg["delta_checkpoint_path"]) if model_cfg.get("delta_checkpoint_path") else None
         self.pipe = self._load_pipeline(model_cfg)
         self.pipe.to(self.device)
 
@@ -141,7 +145,30 @@ class PrismCounterfactualGenerator:
                 )
             PrismCounterfactualGenerator._load_unet_weights_strict(pipe.unet, ckpt_path)
 
+        delta_path = model_cfg.get("delta_checkpoint_path")
+        if delta_path:  # Phase 6: the trainable-subset overlay saved by src/training/diffusion_finetune.py
+            if not Path(delta_path).exists():
+                raise FileNotFoundError(f"model.delta_checkpoint_path does not exist: {delta_path!r}")
+            PrismCounterfactualGenerator._apply_delta_strict(pipe.unet, delta_path)
+
         return pipe
+
+    @staticmethod
+    def _apply_delta_strict(unet, delta_path: str) -> None:
+        """Overlay a (non-empty) subset of U-Net tensors on top of the loaded weights; every key must exist with the same shape."""
+        from safetensors import safe_open
+
+        with safe_open(delta_path, framework="pt", device="cpu") as f:
+            keys = list(f.keys())
+            target = unet.state_dict()
+            if not keys:
+                raise RuntimeError(f"delta checkpoint {delta_path} is empty")
+            unknown = [k for k in keys if k not in target]
+            if unknown:
+                raise RuntimeError(f"delta checkpoint {delta_path} has {len(unknown)} keys not in the U-Net (e.g. {unknown[:3]})")
+            with torch.no_grad():
+                for k in keys:
+                    target[k].copy_(f.get_tensor(k))
 
     @staticmethod
     def _load_unet_weights_strict(unet, ckpt_path: str) -> None:
@@ -178,7 +205,7 @@ class PrismCounterfactualGenerator:
         h.update(repr((
             orig_caption, offsets, num_inner_steps, epsilon, cfg.get("num_ddim_steps", 20),
             cfg.get("guidance_scale", 7.5), self.inverter.image_size, model_cfg.get("ldm_type"),
-            model_cfg.get("base_model_id"), model_cfg.get("finetuned_checkpoint_path"),
+            model_cfg.get("base_model_id"), model_cfg.get("finetuned_checkpoint_path"), self._delta_sha256,
         )).encode())
         return Path(cache_dir) / f"inversion_{h.hexdigest()[:20]}.pt"
 
@@ -226,6 +253,8 @@ class PrismCounterfactualGenerator:
             edit_caption = NO_FINDING_CAPTION
 
         timings = {}
+        if self.device.type == "cuda":
+            torch.cuda.reset_peak_memory_stats(self.device)  # per-request peak (inversion dominates; ~0 extra when cached)
 
         t0 = time.time()
         self.inverter.num_ddim_steps = cfg.get("num_ddim_steps", 20)
@@ -307,6 +336,7 @@ class PrismCounterfactualGenerator:
             inference_info={
                 "timings": timings,
                 "inversion_cached": inversion_cached,
+                "gpu_peak_mem_gb": round(torch.cuda.max_memory_allocated(self.device) / 1e9, 2) if self.device.type == "cuda" else None,
                 "local_blend_mask_fraction": getattr(getattr(controller, "local_blend", None), "last_mask_fraction", None),
                 "total_seconds": round(sum(timings.get(k, 0) for k in ("inversion_seconds", "editing_seconds", "clip_metrics_seconds")), 2),
                 "params": {k: cfg.get(k) for k in (

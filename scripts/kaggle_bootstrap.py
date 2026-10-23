@@ -60,6 +60,24 @@ def compare_torch(before: dict, after: dict) -> list:
     return problems
 
 
+# Pre-installed Kaggle packages that cannot coexist with the pinned stack and that nothing in this project
+# uses. Found on the first real Kaggle run: transformers 4.37.2 / diffusers 0.24.0 import `peft` whenever it
+# is installed, and Kaggle's peft 0.20.0 does `from accelerate.utils.memory import clear_device_cache`, which
+# the pinned accelerate 0.26.1 lacks -> ImportError while loading any pipeline. Only the (ephemeral) session
+# environment is changed; torch is untouched and re-verified afterwards.
+REMOVE_IF_PRESENT = ("peft",)
+
+
+def remove_incompatible(run=subprocess.run) -> list:
+    removed = []
+    for name in REMOVE_IF_PRESENT:
+        if run([sys.executable, "-m", "pip", "show", name], capture_output=True).returncode == 0:
+            print(f"removing pre-installed {name} (incompatible with the pinned transformers/diffusers/accelerate)")
+            run([sys.executable, "-m", "pip", "uninstall", "-y", name])
+            removed.append(name)
+    return removed
+
+
 def probe_torch() -> dict:
     out = subprocess.run([sys.executable, "-c", PROBE], capture_output=True, text=True)
     if out.returncode != 0:
@@ -96,6 +114,8 @@ def main(argv=None) -> int:
     cmd = [sys.executable, "-m", "pip", "install", "--quiet", "-r", str(filtered), "-c", str(constraints)]
     print("running:", " ".join(cmd))
     rc = subprocess.run(cmd).returncode
+    if rc == 0:
+        remove_incompatible()
     after = probe_torch()
     print(f"torch after:  {after}")
     problems = compare_torch(before, after)

@@ -1,0 +1,6 @@
+# Phase 6 arm A-ft: PRISM checkpoint + N steps of the diffusion loss only (the fine-tuned control for B).
+extends: baseline.yaml
+task: diffusion_finetune
+experiment:
+  id: A
+  name: phase6_A_ft

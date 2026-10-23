@@ -135,6 +135,11 @@ def train(config: Dict, checkpoint_override: Optional[str] = None) -> Dict:
 
     device = resolve_device(train_cfg.get("device", "cpu"))  # raises if cuda requested but unavailable
     logger.info("Using device: %s", device)
+    # Mixed precision (T4 tensor cores): only on CUDA; silently a no-op on CPU so one config works everywhere.
+    use_amp = bool(train_cfg.get("amp", False)) and device.type == "cuda"
+    if train_cfg.get("amp", False) and not use_amp:
+        logger.info("training.amp requested but device is %s; running in fp32", device)
+    scaler = torch.amp.GradScaler("cuda") if use_amp else None
 
     model = build_model(model_cfg, num_labels=len(target_findings)).to(device)
     optimizer = torch.optim.AdamW(
@@ -168,7 +173,7 @@ def train(config: Dict, checkpoint_override: Optional[str] = None) -> Dict:
 
     for epoch in range(start_epoch, epochs):
         model.train()
-        epoch_loss, n_batches = 0.0, 0
+        epoch_loss, n_batches, n_seen = 0.0, 0, 0
         t0 = time.time()
         for batch in train_loader:
             images = batch["image"].to(device)
@@ -176,17 +181,28 @@ def train(config: Dict, checkpoint_override: Optional[str] = None) -> Dict:
             mask = batch["mask"].to(device)
 
             optimizer.zero_grad()
-            logits = model(images)
-            loss = masked_bce_loss(logits, labels, mask)
-            loss.backward()
-            optimizer.step()
+            if use_amp:
+                with torch.autocast(device_type="cuda", dtype=torch.float16):
+                    logits = model(images)
+                loss = masked_bce_loss(logits.float(), labels, mask)  # loss in fp32
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                logits = model(images)
+                loss = masked_bce_loss(logits, labels, mask)
+                loss.backward()
+                optimizer.step()
 
             epoch_loss += loss.item()
             n_batches += 1
+            n_seen += images.shape[0]
 
         train_loss = epoch_loss / max(n_batches, 1)
+        train_seconds = time.time() - t0
         val_metrics = evaluate(model, val_loader, device, target_findings)
         elapsed = time.time() - t0
+        logger.info("train throughput: %.1f img/s (%d images in %.1fs, amp=%s)", n_seen / max(train_seconds, 1e-9), n_seen, train_seconds, use_amp)
 
         logger.info(
             "Epoch %d/%d - train_loss=%.4f val_loss=%.4f val_macro_auroc=%s val_macro_auprc=%s (%.1fs)",

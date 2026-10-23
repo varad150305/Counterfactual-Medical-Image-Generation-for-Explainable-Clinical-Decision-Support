@@ -7,6 +7,8 @@
 Tasks (existing code only — this script is glue, not new research code):
   counterfactual    PrismCounterfactualGenerator over config `inputs` (experiment A today)
   classifier_train  src.training.classifier_trainer.train (Phase 5 will run it on real CheXpert)
+  diffusion_finetune src.training.diffusion_finetune.finetune: experiment A (diffusion loss only) or B (+ disease
+                    consistency) is selected by the config's `losses` block (Phase 6)
 
 Examples:
   python scripts/run_experiment.py --config configs/baseline.yaml --dry-run
@@ -44,18 +46,28 @@ def _setup_logging(log_file: Path) -> None:
 
 
 def _task_counterfactual(cfg: dict, run_dir: Path) -> dict:
+    import time
+
     from src.inference.prism_baseline import PrismCounterfactualGenerator
 
+    t0 = time.time()
     generator = PrismCounterfactualGenerator(cfg)
+    load_seconds = round(time.time() - t0, 2)
+    logger.info("generator (SD pipeline + checkpoint + CLIP) loaded in %.1fs", load_seconds)
     summary = []
     for i, req in enumerate(cfg.get("inputs") or []):
+        # optional per-input `params:` overrides editing.* for this request only (e.g. self_replace_steps);
+        # requests that share image/captions/inversion settings reuse one cached null-text inversion.
+        params = req.get("params") or {}
         res = generator.generate(req["image"], req["pathology"], operation=req.get("operation", "add"),
-                                 original_caption=req.get("original_caption"))
-        out = res.save(str(run_dir / "outputs" / f"{i:02d}_{req['operation']}_{req['pathology']}"))
+                                 original_caption=req.get("original_caption"), **params)
+        tag = "_".join(f"{k}{v}" for k, v in params.items())
+        folder = f"{i:02d}_{req.get('operation', 'add')}_{req['pathology']}" + (f"_{tag}" if tag else "")
+        out = res.save(str(run_dir / "outputs" / folder))
         logger.info("input %d -> %s | metrics=%s | timings=%s", i, out, res.metrics, res.inference_info["timings"])
         summary.append({"request": req, "output_dir": out, "metrics": res.metrics,
                         "inference_info": res.inference_info})
-    return {"counterfactuals": summary}
+    return {"generator_load_seconds": load_seconds, "counterfactuals": summary}
 
 
 def _task_classifier_train(cfg: dict, run_dir: Path, restored_last: Path | None) -> dict:
@@ -71,10 +83,16 @@ def _task_classifier_train(cfg: dict, run_dir: Path, restored_last: Path | None)
     return {"classifier": {"test_metrics": result["test_metrics"], "epochs_recorded": len(result["history"])}}
 
 
+def _task_diffusion_finetune(cfg: dict, run_dir: Path, restored_last: Path | None) -> dict:
+    from src.training.diffusion_finetune import finetune
+
+    return {"finetune": finetune(cfg, run_dir, restored_last)}
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--config", required=True)
-    p.add_argument("--task", choices=["counterfactual", "classifier_train"])
+    p.add_argument("--task", choices=["counterfactual", "classifier_train", "diffusion_finetune"])
     p.add_argument("--name", help="experiment name (default: experiment.name from the config)")
     p.add_argument("--set", dest="overrides", action="append", default=[], metavar="dotted.key=value")
     p.add_argument("--run-root", help="overrides output.run_root")
@@ -87,7 +105,7 @@ def main(argv=None) -> int:
     cfg = load_config(args.config)
     cfg = apply_overrides(cfg, args.overrides)
     task = args.task or cfg.get("task")
-    if task not in ("counterfactual", "classifier_train"):
+    if task not in ("counterfactual", "classifier_train", "diffusion_finetune"):
         raise SystemExit(f"No valid task: pass --task or set `task:` in the config (got {task!r})")
     if args.name:
         cfg.setdefault("experiment", {})["name"] = args.name
@@ -119,8 +137,12 @@ def main(argv=None) -> int:
 
     try:
         set_seed(int(cfg.get("seed", 42)))
-        results = (_task_counterfactual(cfg, run_dir) if task == "counterfactual"
-                   else _task_classifier_train(cfg, run_dir, restored_last))
+        if task == "counterfactual":
+            results = _task_counterfactual(cfg, run_dir)
+        elif task == "classifier_train":
+            results = _task_classifier_train(cfg, run_dir, restored_last)
+        else:
+            results = _task_diffusion_finetune(cfg, run_dir, restored_last)
         write_manifest(run_dir, cfg, env, status="completed", run_path=str(run_dir), results=results)
         return 0
     except BaseException as e:  # noqa: BLE001 - record KeyboardInterrupt/SystemExit too, then re-raise

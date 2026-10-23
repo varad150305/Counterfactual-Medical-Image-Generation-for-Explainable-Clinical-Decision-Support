@@ -20,9 +20,13 @@ from src.data.labels import build_label_and_mask, extract_patient_id
 logger = logging.getLogger(__name__)
 
 
-def load_chexpert_csv(csv_path: str, max_samples: Optional[int] = None, seed: int = 42) -> pd.DataFrame:
-    """Load a CheXpert-schema CSV. `max_samples` subsamples rows (reproducibly,
-    seeded) for quick smoke tests / limited-compute runs — this is the
+def load_chexpert_csv(
+    csv_path: str, max_samples: Optional[int] = None, seed: int = 42, frontal_only: bool = False
+) -> pd.DataFrame:
+    """Load a CheXpert-schema CSV. `frontal_only` keeps rows whose `Frontal/Lateral`
+    column is "Frontal" (real CheXpert mixes both views; PRISM's paths are
+    `view1_frontal`) and is applied BEFORE subsampling. `max_samples` subsamples
+    rows (reproducibly, seeded) for quick smoke tests / limited-compute runs — the
     "configurable dataset/subset size" required by Phase 2."""
     csv_path = Path(csv_path)
     if not csv_path.exists():
@@ -35,6 +39,10 @@ def load_chexpert_csv(csv_path: str, max_samples: Optional[int] = None, seed: in
     df = pd.read_csv(csv_path)
     if "Path" not in df.columns:
         raise ValueError(f"Expected a 'Path' column in {csv_path}, found columns: {list(df.columns)}")
+    if frontal_only:
+        if "Frontal/Lateral" not in df.columns:
+            raise ValueError(f"frontal_only=True but {csv_path} has no 'Frontal/Lateral' column")
+        df = df[df["Frontal/Lateral"] == "Frontal"].reset_index(drop=True)
     if max_samples is not None and max_samples < len(df):
         df = df.sample(n=max_samples, random_state=seed).reset_index(drop=True)
     return df

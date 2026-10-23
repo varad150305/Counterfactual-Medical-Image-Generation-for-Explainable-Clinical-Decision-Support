@@ -18,7 +18,10 @@ def load_and_split(data_cfg: Dict, default_seed: int) -> Tuple[pd.DataFrame, pd.
     `train()` uses, so a script pointed at the same config always reproduces
     the same split.
     """
-    df = load_chexpert_csv(data_cfg["csv_path"], max_samples=data_cfg.get("max_samples"), seed=default_seed)
+    df = load_chexpert_csv(
+        data_cfg["csv_path"], max_samples=data_cfg.get("max_samples"), seed=default_seed,
+        frontal_only=bool(data_cfg.get("frontal_only", False)),
+    )
     split_cfg = data_cfg.get("split", {})
     return patient_aware_split(
         df,

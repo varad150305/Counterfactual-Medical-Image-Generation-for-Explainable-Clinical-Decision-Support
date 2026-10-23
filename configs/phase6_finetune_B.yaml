@@ -1,0 +1,6 @@
+# Phase 6 arm B: identical recipe to phase6_finetune_A.yaml + lambda1 * L_disease (weight set by the pre-registered rule).
+extends: disease_consistency.yaml
+task: diffusion_finetune
+experiment:
+  id: B
+  name: phase6_B

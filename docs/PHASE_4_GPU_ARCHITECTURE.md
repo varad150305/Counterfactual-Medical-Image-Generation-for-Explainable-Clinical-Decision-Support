@@ -2,19 +2,19 @@
 
 Status date: 2026-10-13. Builds on [PHASE_3_PRISM_BASELINE.md](PHASE_3_PRISM_BASELINE.md). Plan context: `CLAUDE.md` was updated to the revised 9-phase sequence (Phase 5 = prerequisite gate, Phase 6 = disease consistency, Phase 7 = anatomical preservation, Phase 8 = evaluation, Phase 9 = application/final docs); research scope unchanged.
 
-## Status: PARTIAL
+## Status: PASS (all 7 acceptance criteria in section 10 verified from the downloaded Kaggle artifacts, 2026-10-13)
 
 | Item | Result |
 |---|---|
 | Thin Kaggle runner + repo scripts it calls | **Built** (`notebooks/kaggle_runner.ipynb`); parses, references only existing scripts, tested locally |
 | GPU / CUDA-compat / VRAM / dependency / path checks | **Built and tested on CPU** (`scripts/check_environment.py`) |
-| Guard against replacing GPU PyTorch | **Built and unit-tested** (`scripts/kaggle_bootstrap.py`) — not yet exercised on a real Kaggle image |
+| Guard against replacing GPU PyTorch | **Built, unit-tested, and exercised on a real Kaggle image**: torch `2.11.0+cu128` identical before/after the install (run 2 log) |
 | Persistent outputs, logs, configs, checkpoint recovery | **Built and tested** (run dirs, manifests, artifact index, resume) |
 | A/B/C experiment configuration | **Built**; A runs, B/C validate but refuse to run until their losses exist (Phases 6/7) |
-| Existing tests | **98/98 pass** (Phases 1–3: 67 + Phase 4: 31) |
-| **GPU smoke test on Kaggle** | **NOT RUN — no GPU execution was possible from here.** Nothing in this phase is GPU-validated. |
+| Existing tests | **107/107 pass** (Phases 1–3: 67 + Phase 4: 40) |
+| **GPU smoke test on Kaggle** | **PASSED (run 2, Tesla T4 ×2, torch 2.11.0+cu128, Python 3.13)** — all four steps `passed`, `gpu_validated=True`, artifacts downloaded and verified (section 11). Scope: tiny test pipeline + DenseNet121 on the GPU; the real-PRISM-checkpoint step has not been run (Phase 5 does it). |
 
-**Exact blocker.** This session has no authenticated access to a Kaggle account with GPU quota. The previously linked account's quota is spent, and the new account's credentials are not available to me. A `kaggle.json` and Kaggle CLI exist on this machine, but they almost certainly belong to the exhausted account, and using stored credentials was not authorized, so they were neither read nor used. The local machine has no CUDA device (Intel iGPU, CPU-only torch). Therefore: every GPU-dependent step is **unverified**, and `gpu_validated` is `false` in every report produced here. The smoke test is ready to run in one notebook session (below).
+**History of the blocker.** The first draft of this phase could not run on a GPU from the authoring machine (CPU-only, no Kaggle access). The smoke test was then run by the user on Kaggle: run 1 exposed two real defects (repo-lookup layout, then the `peft`/`accelerate` import clash), both fixed; run 2 passed (section 11). Credentials were never accessed by the assistant.
 
 ## 1. Architecture
 
@@ -70,7 +70,7 @@ The notebook streams every step's output through Python into the cell log **and*
 
 `scripts/check_environment.py` (read-only) verifies: torch is a CUDA build; a device is visible; the **device's compute capability is covered by the arch list this torch was compiled for** (native or PTX); a real CUDA kernel runs; enough free VRAM (`--min-vram-gb`); dependencies vs `requirements.txt`; required paths. `--require-gpu` exits 2 if the GPU isn't usable. **Verified locally only on a CPU machine** (reports "CPU-only build", exits 2). Its GPU branch is untested.
 
-Known risk (unverified): the repo pins old libraries (`diffusers==0.24.0`, `transformers==4.37.2`, `huggingface_hub==0.20.3`, `accelerate==0.26.1`) that work with the local torch 2.14 CPU build; whether they install and run cleanly on Kaggle's current image (Python/torch/numpy versions) is untested. The bootstrap will say so loudly if pip fails (exit 5) or touches torch (exit 4).
+Known risk (first real run in section 11 found and fixed one such conflict, `peft`; others may remain): the repo pins old libraries (`diffusers==0.24.0`, `transformers==4.37.2`, `huggingface_hub==0.20.3`, `accelerate==0.26.1`) that work with the local torch 2.14 CPU build; whether they install and run cleanly on Kaggle's current image (Python/torch/numpy versions) is untested. The bootstrap will say so loudly if pip fails (exit 5) or touches torch (exit 4).
 
 ## 4. Persistence and recovery
 
@@ -145,3 +145,40 @@ The `gpu_validated` flag alone is not accepted. All of the following must hold (
 7. `notebook_log.txt` shows exit code 0 for the bootstrap, environment check and smoke test, and `failed steps: none`.
 
 If a GPU ran but a step failed, only that actual blocker is diagnosed and fixed. If no usable GPU was present, Phase 4 stays PARTIAL.
+
+## 11. First real Kaggle session (log pasted by the user)
+
+Environment observed: Python 3.13.15, **torch 2.11.0+cu128** (torchvision 0.26.0, torchaudio 2.11.0), **Tesla T4 ×2** (compute capability 7.5, 15.64 GB each). This run used the *older* repo package (commit `642eaf8`, content hash `c0c63f9f…`, 85 files) with the updated notebook, so it does **not** count toward the provenance criterion in section 10.
+
+| Step | Result | Evidence in the log |
+|---|---|---|
+| Repo discovery | **worked** | dataset mounted at `/kaggle/input/datasets/<owner>/genai-mini-project/` — the nested layout the old depth-1 lookup missed |
+| Bootstrap | **passed (exit 0), torch untouched** | `torch before` and `torch after` identical (`2.11.0+cu128`, CUDA 12.8, available) |
+| Environment check | **passed** | 2 × T4, `GPU usable: True (kernel test passed: True)`, dependencies 22/22 satisfy `requirements.txt` |
+| Smoke: `cuda_environment` | passed | |
+| Smoke: `classifier_fwd_bwd` | passed (8.6 s) | DenseNet121 forward + backward + optimizer step on the device |
+| Smoke: `tiny_pipeline_inference` | **FAILED** | `ImportError: cannot import name 'clear_device_cache' from 'accelerate.utils.memory'` |
+| Smoke: `artifact_recovery` | passed | (does not count while a preceding step fails) |
+| Result | `gpu_validated=False` | the flag correctly refused to claim validation |
+
+**Root cause of the failure (diagnosed, one fix):** the pinned stack (`transformers 4.37.2`, `diffusers 0.24.0`) imports `peft` whenever it is installed; Kaggle ships `peft 0.20.0`, whose `peft/utils/loftq_utils.py` does `from accelerate.utils.memory import clear_device_cache`; the pinned `accelerate 0.26.1` has no such function. It never appeared locally because `peft` is not installed there. Verified by inspecting the peft 0.20.0 wheel and the local accelerate/transformers/diffusers sources (the exact traceback lives in `smoke_report.json`, which was not available). **Fix:** `kaggle_bootstrap.py` now uninstalls `peft` (unused by this project; session-only; torch re-verified afterwards). The smoke test now also prints a failing step's traceback into the log.
+
+**Other observations from the log (not blockers):** pip printed ~30 dependency-conflict lines for unrelated Kaggle packages (mainly `pydantic` 1.x vs 2.x requirements, `huggingface-hub` 0.20.3 and `tokenizers` 0.15.2 vs newer ones) because of the repo's pinned versions; these packages are not used by the pipeline and the install still exited 0. Other pre-installed packages could in principle interact with the pinned stack in the same way `peft` did; the only way to know is the next run.
+
+**Status after this run:** CUDA-level evidence now exists (kernel test, DenseNet121 forward/backward on a T4), but the phase is **still PARTIAL**: the pipeline-inference step (the part that matters for PRISM) has not yet run on the GPU, so `gpu_validated` is still false. Next run needs the **new** repo package (new content hash) uploaded as a new dataset version; the notebook itself is unchanged.
+
+### Run 2 (after the `peft` fix) — `gpu_validated=True`
+
+Package used: commit `f7e2c73`, `dirty=True`, 85 files, content hash `9634e2ea…0462f92` — **matches the rebuilt package** (acceptance check 5 satisfied from the log). Dataset name on Kaggle: `genai-mini-project-new`.
+
+| Acceptance check (section 10) | Status | Evidence |
+|---|---|---|
+| 1. all steps passed, `gpu_validated: true` | **verified (log + JSON)** | `[passed]` ×4, `gpu_validated: true`, `device: "cuda"` |
+| 2. real GPU, CUDA build, kernel test | **verified (log)** | torch 2.11.0+cu128, 2 × Tesla T4 cc7.5 15.64 GB, `GPU usable: True (kernel test passed: True)` |
+| 3. `param_device`, `peak_mem_gb > 0`, pipeline output shape | **verified (JSON)** | `param_device: cuda:0`, classifier peak 0.58 GB; pipeline `device: cuda`, peak 0.17 GB, output `[64, 64, 3]`; `report.device: cuda`; CUDA torch build (`cpu_only_build: false`) |
+| 4. torch untouched, bootstrap exit 0 | **verified (log)** | `torch before` == `torch after`; `peft 0.20.0` uninstalled; exit code 0 |
+| 5. provenance hash | **verified (log)** | `content_sha256` equals the rebuilt package's |
+| 6. artifacts verify after download | **verified** | `artifacts_20261013-140845.zip` (58,529 bytes, sha256 `e32e432b…d3d6`): CRC test clean, 17 members; `verify_artifacts()` on `gpu_smoke/20261013-140808-f7e2c73/` → **no problems** across all 7 indexed files; in-session `artifact_recovery` also passed |
+| 7. exit codes 0, `failed steps: none` | **verified (log)** | bootstrap, environment check and smoke test all exit 0 |
+
+Timings seen (cold start, not throughput): `classifier_fwd_bwd` 9.9 s; `tiny_pipeline_inference` 22.5 s (includes downloading and loading the tiny model). Additional evidence from the report: the installed torch targets `sm_75/80/86/90/100/120` only, so a P100 (`sm_60`) would have failed — the environment check would have flagged it; T4 is the right choice. The persisted `notebook_log.txt` is a snapshot taken before the final two lines (`artifacts:`/`failed steps:`) were written; those lines are in the notebook's own printed output (`failed steps: none`). **All seven criteria hold → Phase 4 = PASS.** This smoke test exercised only the **tiny** pipeline; PRISM-scale GPU speed and memory are first measured in Phase 5.

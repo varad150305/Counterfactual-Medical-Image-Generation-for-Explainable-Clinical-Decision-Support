@@ -95,19 +95,26 @@ class TestExperimentConfigs:
             assert spec["id"] == exp_id
             assert {k for k, v in spec["losses"].items() if v["enabled"]} == enabled
 
-    def test_baseline_is_runnable_and_b_c_refuse_until_implemented(self):
-        from src.utils.experiment import assert_runnable, validate_experiment_config
+    def test_baseline_is_runnable_b_needs_lambda_and_c_refuses_until_phase7(self):
+        from src.utils.experiment import ExperimentConfigError, assert_runnable, validate_experiment_config
 
         assert_runnable(validate_experiment_config(self._load("baseline")))
-        for name, phase in (("disease_consistency", "Phase 6"), ("anatomy_consistency", "Phase 7")):
-            with pytest.raises(NotImplementedError, match=phase):
-                assert_runnable(validate_experiment_config(self._load(name)))
+        # Phase 6: B's loss exists, but lambda1 must be set (by the pre-registered rule) before B can run
+        with pytest.raises(ExperimentConfigError, match="weight must be set"):
+            assert_runnable(validate_experiment_config(self._load("disease_consistency")))
+        with pytest.raises(NotImplementedError, match="Phase 7"):
+            assert_runnable(validate_experiment_config(self._load("anatomy_consistency")))
 
-    def test_baseline_preserves_phase3_inference_behaviour(self):
-        """Experiment A must not change what Phase 3 produced: its model/editing/evaluation blocks are the Phase 3 config's."""
+    def test_baseline_changes_only_the_documented_settings_vs_the_phase3_config(self):
+        """Phase 6: experiment A carries the Phase 5-validated settings (GPU, 512 px, 30 steps, 5 inner steps) and the
+        initial self_replace_steps 0.2; everything else in model/editing/evaluation is still exactly the Phase 3 config's."""
         phase3, a = self._load("prism_baseline"), self._load("baseline")
-        for block in ("model", "editing", "evaluation"):
-            assert a[block] == phase3[block]
+        assert a["evaluation"] == phase3["evaluation"]
+        assert {k: v for k, v in a["model"].items() if k != "device"} == {k: v for k, v in phase3["model"].items() if k != "device"}
+        assert a["model"]["device"] == "cuda"
+        changed = {k for k in a["editing"] if a["editing"][k] != phase3["editing"].get(k)}
+        assert changed == {"image_size", "num_ddim_steps", "num_inner_steps", "self_replace_steps"}
+        assert a["editing"]["self_replace_steps"] == 0.2
 
     def test_b_and_c_lambdas_are_unset_not_invented(self):
         assert self._load("disease_consistency")["losses"]["disease_consistency"]["weight"] is None
@@ -184,7 +191,7 @@ def _tiny_cf_args(image, run_root, extra=()):
     return [
         "--config", str(REPO / "configs" / "baseline.yaml"), "--run-root", str(run_root),
         "--set", "model.ldm_type=stable_diffusion_v1_5", "--set", f"model.base_model_id={TINY_SD}",
-        "--set", "model.device=cpu", "--set", "editing.num_ddim_steps=2", "--set", "editing.num_inner_steps=1",
+        "--set", "model.device=cpu", "--set", "editing.image_size=32", "--set", "editing.num_ddim_steps=2", "--set", "editing.num_inner_steps=1",
         "--set", "editing.seed=0", "--set", "evaluation.compute_clip_metrics=false",
         "--set", f'inputs=[{{image: "{image}", pathology: Cardiomegaly, operation: add}}]', *extra,
     ]
@@ -197,10 +204,12 @@ class TestRunExperiment:
         assert '"A_prism_baseline"' in capsys.readouterr().out
         assert list(tmp_path.iterdir()) == []
 
-    @pytest.mark.parametrize("cfg", ["disease_consistency", "anatomy_consistency"])
-    def test_b_and_c_fail_fast_without_creating_a_run_dir(self, tmp_path, cfg):
+    @pytest.mark.parametrize("cfg,exc", [("disease_consistency", "ExperimentConfigError"), ("anatomy_consistency", "NotImplementedError")])
+    def test_b_and_c_fail_fast_without_creating_a_run_dir(self, tmp_path, cfg, exc):
+        from src.utils.experiment import ExperimentConfigError
+
         run = load_script("run_experiment")
-        with pytest.raises(NotImplementedError):
+        with pytest.raises({"ExperimentConfigError": ExperimentConfigError, "NotImplementedError": NotImplementedError}[exc]):
             run.main(["--config", str(REPO / "configs" / f"{cfg}.yaml"), "--run-root", str(tmp_path)])
         assert list(tmp_path.iterdir()) == []
 
@@ -329,6 +338,34 @@ class TestKaggleBridge:
         boot = load_script("kaggle_bootstrap")
         probe = {"family": {"torch": "2.5.1+cu124", "torchvision": "0.20.1+cu124", "torchaudio": None}}
         assert boot.build_constraints(probe) == "torch==2.5.1+cu124\ntorchvision==0.20.1+cu124\n"
+
+    def test_preinstalled_peft_is_removed_only_when_present(self):
+        """Regression from the first real Kaggle run: Kaggle's peft 0.20.0 needs accelerate's clear_device_cache,
+        which the pinned accelerate 0.26.1 lacks; transformers 4.37.2 / diffusers 0.24.0 import peft whenever it is
+        installed -> ImportError while loading any pipeline."""
+        boot = load_script("kaggle_bootstrap")
+
+        class Result:
+            def __init__(self, returncode):
+                self.returncode = returncode
+
+        def make_runner(installed, log):
+            def runner(cmd, **kwargs):
+                log.append(cmd)
+                return Result(0 if (cmd[3] == "show" and cmd[4] in installed) else 1)
+            return runner
+
+        log = []
+        assert boot.remove_incompatible(make_runner({"peft"}, log)) == ["peft"]
+        assert any(c[3] == "uninstall" and "peft" in c for c in log)
+
+        log = []
+        assert boot.remove_incompatible(make_runner(set(), log)) == []
+        assert not any(c[3] == "uninstall" for c in log)
+
+    def test_torch_is_never_in_the_removal_list(self):
+        boot = load_script("kaggle_bootstrap")
+        assert not set(boot.REMOVE_IF_PRESENT) & set(boot.TORCH_FAMILY)
 
     def test_torch_alteration_is_detected(self):
         boot = load_script("kaggle_bootstrap")

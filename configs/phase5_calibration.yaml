@@ -1,0 +1,25 @@
+# Phase 5 gate (a): ONE bounded, real-checkpoint PRISM calibration on ONE real CheXpert image.
+# Extends experiment A (baseline). `inputs` and the checkpoint path are filled in by
+# scripts/locate_chexpert.py -> generated_calibration.yaml (3 edit passes at PRISM's own
+# self_replace_steps {0.4, 0.6, 0.8} sharing ONE null-text inversion via the inversion cache).
+#
+# Lean settings: 512 px (the resolution the PRISM checkpoint was fine-tuned at; the Phase 3 failure
+# was at 256 px on synthetic input), 30 DDIM steps (paper-like runs commonly use 50) and 5 inner
+# null-text steps (PRISM's code uses 10) to keep a T4 session short. These are deviations from the
+# paper setup and are reported as such.
+extends: baseline.yaml
+
+experiment:
+  id: A-cal
+  name: phase5_prism_calibration
+
+model:
+  device: cuda
+
+editing:
+  image_size: 512
+  num_ddim_steps: 30
+  num_inner_steps: 5
+  inversion_cache_dir: /kaggle/working/experiments/phase5/inversion_cache
+
+inputs: []   # replaced by generated_calibration.yaml

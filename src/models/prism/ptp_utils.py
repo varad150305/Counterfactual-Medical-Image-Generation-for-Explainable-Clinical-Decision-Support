@@ -66,10 +66,20 @@ def reset_attention_control(unet) -> None:
     this, a later plain forward pass (e.g. NullInversion's DDIM inversion
     loop, which must run attention-control-free) would silently keep running
     through whatever controller a previous edit left wired in. Called at the
-    start of NullInversion.invert() for exactly this reason."""
-    from diffusers.models.attention_processor import AttnProcessor
+    start of NullInversion.invert() for exactly this reason.
 
-    unet.set_attn_processor({name: AttnProcessor() for name in unet.attn_processors.keys()})
+    Restores diffusers' *default* processor for the installed torch
+    (AttnProcessor2_0 = scaled-dot-product attention when available, else the
+    explicit-matrix AttnProcessor). SDPA matters at 512 px: null-text
+    inversion backpropagates through the UNet, and the explicit attention
+    matrices (4096 x 4096 per head per layer) are the dominant activation
+    memory on a 15.6 GB T4. Mathematically the same attention; only the edit
+    pass needs the explicit probabilities (P2PAttnProcessor)."""
+    import torch.nn.functional as F
+    from diffusers.models.attention_processor import AttnProcessor, AttnProcessor2_0
+
+    processor_cls = AttnProcessor2_0 if hasattr(F, "scaled_dot_product_attention") else AttnProcessor
+    unet.set_attn_processor({name: processor_cls() for name in unet.attn_processors.keys()})
 
 
 def register_attention_control(unet, controller) -> int:
