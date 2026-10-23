@@ -1,6 +1,6 @@
 # Phase 7 — Anatomical preservation (experiment C vs A0 / A-ft / B)
 
-Status date: 2026-10-23. **Status: executed and scored. Verdict: PARTIAL (pre-registered rules: C2, C3, C4 hold; C1, C5 and the visual check fail).** C removes B's dot-pattern collapse and recovers 3.4 dB of preservation relative to B, but it does not restore the preservation of the diffusion-only control, still produces grossly exaggerated cardiac enlargements, and introduces a new artifact type (hallucinated pacemaker-like devices). Everything in sections 1-7 was written before any Phase 7 result existed; the rules were applied literally. Phase 8 is untouched. Phase 6 (commit `57c1929`) is unchanged; the Phase 7 changes are not yet committed.
+Status date: 2026-10-23. **Status: executed and scored. Verdict: PARTIAL (pre-registered rules: C2, C3, C4 hold; C1, C5 and the visual check fail).** C removes B's dot-pattern collapse and recovers 3.4 dB of preservation relative to B, but it does not restore the preservation of the diffusion-only control, still produces grossly exaggerated cardiac enlargements, and introduces a new artifact type (hallucinated pacemaker-like devices). Everything in sections 1-7 was written before any Phase 7 result existed; the rules were applied literally. Phase 8 is untouched. Phase 6 (commit `57c1929`) is unchanged; the Phase 7 changes are committed as `db2c76c`.
 
 ## 1. Scope (strict)
 

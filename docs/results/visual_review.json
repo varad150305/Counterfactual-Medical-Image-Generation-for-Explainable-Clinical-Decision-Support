@@ -1,0 +1,21 @@
+{
+  "reviewer": "Claude (AI assistant), non-clinical",
+  "nature": "QUALITATIVE manual review of saved outputs; not a metric, not a clinical assessment. The images are synthetic counterfactuals.",
+  "scope": {
+    "A0": "8 images (Phase 6 viability set, indices 0-7) at reduced size; the other 16 were not looked at",
+    "A_ft": "all 24, at reduced size in side-by-side sheets (original | A-ft | B | C)",
+    "B": "all 24, at reduced size in side-by-side sheets",
+    "C": "all 24 at reduced size; indices 2, 8, 11, 19 (devices) and 9, 12, 14, 15, 16, 21 at full resolution"
+  },
+  "devices_confirmed_full_resolution": [2, 11, 19],
+  "device_like_objects_less_certain": [8, 9, 15],
+  "c_extreme_cardiac_shadow": [2, 3, 6, 12, 13, 16, 17, 19, 20, 21, 22],
+  "heuristic_proxy_flags_that_are_not_devices": [12, 14, 16, 21],
+  "table": [
+    {"finding": "regular scatter of small bright dots on the edit", "A0": "not seen (8 reviewed)", "A_ft": "0 / 24", "B": "24 / 24", "C": "0 / 24"},
+    {"finding": "lungs and mediastinum replaced by one large smooth bright mass (B-type collapse)", "A0": "0 / 8 reviewed", "A_ft": "0 / 24", "B": "24 / 24", "C": "0 / 24 (the lungs, ribs, spine and clavicles remain visible)"},
+    {"finding": "grossly exaggerated, smooth cardiac shadow filling a large part of the thorax", "A0": "not seen (8 reviewed)", "A_ft": "not seen", "B": "n/a (collapsed)", "C": "most images; extreme in 11 (2, 3, 6, 12, 13, 16, 17, 19, 20, 21, 22)"},
+    {"finding": "implanted-device-like object (pacemaker/ICD generator, leads) that is not in the original", "A0": "not seen (8 reviewed)", "A_ft": "not seen", "B": "some bright objects inside the collapsed mass (not separately counted)", "C": "3 confirmed at full resolution (2, 11, 19); 3 less certain (8, 9, 15)"},
+    {"finding": "blob-like opacity on messy AP/portable images", "A0": "2 / 8 reviewed (indices 5, 6)", "A_ft": "occasional, not counted", "B": "n/a (collapsed)", "C": "not separately counted"}
+  ]
+}

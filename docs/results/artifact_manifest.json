@@ -1,0 +1,45 @@
+{
+ "code_packages_content_sha256": {
+  "phase6_session": "b3acc4e1ffc8b813de90186bcc1476c2c0c5f4c64b01c5393acbb194f0328bbf",
+  "phase7_session": "5e70918ee175db988eaf85f48cd532c2c452c97e8ff3ef361c9352ea378dbe62"
+ },
+ "delta_checkpoints_sha256_recorded_in_finetune_summary_(files_not_in_download)": {
+  "A_ft": "d519cf67570cbe2db97ec0bfb4889ccd4c1fd76d232d314fb467a0378db6f0b7",
+  "B": "bd5f041faf9a893fe51c1fa9d2e571068bf649e7978b1000c2ef993bbf791cc6",
+  "C": "1e7b44d72d63bb6ef230fb7c688f31067396f9b852107a008b434cb71409e3cc"
+ },
+ "eval_set_json_sha256": "73c8764f63b8ebf8247a961d971ad5f729c46ebbf0cc158124cbdf5dfb402940",
+ "frozen_classifier_best_pt_sha256": "d14a9e87519e80803449cdeb2cf550a08b4508f52587d3767aa967f8cb51763a",
+ "label_csv_train_resolved_sha256": "01a6d102db8e7eab3d7389a00a95aa61fc4222cff44ed0a53fb803fb28a5c0d8",
+ "note": "Hashes of the saved Kaggle artifacts that docs/FINAL_RESEARCH_REPORT.md is rebuilt from. The artifacts themselves contain CheXpert-derived images and are NOT in the repository. Zip hashes are the values printed by the Kaggle notebooks (cross-checked against the downloaded zips); the zips of earlier phases are listed for the record.",
+ "stored_per_image_scores_sha256": {
+  "A0": "f2799003737b83ab6dc8e2cbdf3cd93ba70cf3771d8ffeffa1bb8b5b5c5b8c40",
+  "A_ft": "86c6428fc1cf496e4ff244b21d3a18e55a960a9f63f1d7bfa943b2d42faab7d6",
+  "B": "308e0b5c3cc1543f22f92835ce6e244432bdb51322735041e11be39b3a3af59f",
+  "C": "66c0f3825c52631a21c243ce8a7af8db7889d1b0b1f1c4cabd33ab1274a2b67f"
+ },
+ "zips": {
+  "phase4_gpu_smoke_run2": {
+   "sha256": "e32e432bc689479ceed62eec1feda0e310bceb70dc0004c7450237f8ea58d3d6",
+   "verified": "2026-10-13 (Phase 4 report)"
+  },
+  "phase5b_classifier_session": {
+   "sha256": "6a84853ca6b23d40b0e1e88416cfeb13dae72b3e2523c6fb283e5e369fbac650",
+   "verified": "2026-10-14 (Phase 5 report)"
+  },
+  "phase6_session1_smoke_viability": {
+   "sha256": "cad8c4d9402e0f9838176a25a2efd70d2cda320425c37a4f39152d5c189670b3",
+   "verified": "2026-10-15 (Phase 6 doc)"
+  },
+  "phase6_v2_training_and_evaluation": {
+   "printed_by_notebook": "02bbed65957768ae590703b335e0be6ae30359ff32ddf5931b2db932df4cf7c4",
+   "sha256": "02bbed65957768ae590703b335e0be6ae30359ff32ddf5931b2db932df4cf7c4",
+   "verified": "re-hashed for Phase 8"
+  },
+  "phase7_training_and_evaluation": {
+   "printed_by_notebook": "59fd016ebf8098002abf8d4f8313b619c95ba8c940fbc0540ae4b32356eff3d2",
+   "sha256": "59fd016ebf8098002abf8d4f8313b619c95ba8c940fbc0540ae4b32356eff3d2",
+   "verified": "re-hashed for Phase 8"
+  }
+ }
+}
