@@ -121,7 +121,7 @@ project/
 │   └── evaluation/
 ├── checkpoints/
 ├── experiments/
-├── app/
+├── app/              # demo.py: command-line research demo (Phase 9)
 ├── tests/
 ├── scripts/
 ├── notebooks/        # thin Kaggle runner only; the repo scripts are the source of truth
@@ -140,11 +140,13 @@ Phases 1-3 are complete (see their reports). The plan from Phase 4 onward was re
 6. **Disease-consistency novelty** (formerly Phase 5) — DONE as PARTIAL (`docs/PHASE_6_DISEASE_CONSISTENCY.md`): B raises the classifier score (+0.25 paired) but at λ1 = 0.5 destroys image validity (PSNR 16.8 dB vs 24.8 for A-ft; adversarial-looking edits) — a negative result for B as specified. Integrate the frozen classifier, implement `L_disease`, train a controlled model, compare vs baseline (A vs B). Gate: measurable, interpretable effect (not just "training runs"). Requires Phase 5.
 7. **Anatomical-preservation novelty & full model** (formerly Phase 6) — DONE as PARTIAL (`docs/PHASE_7_ANATOMICAL_PRESERVATION.md`): C = B + frozen-classifier-feature preservation loss removes B's dot-pattern collapse and recovers +3.4 dB vs B, but PSNR stays 4.6 dB below the diffusion-only control, edits remain exaggerated and hallucinated devices appear — a documented negative/partial result; no improvement claimed. Feature/region-aware preservation, combine with disease consistency, train the full model (A/B/C comparison). Must balance requested change vs. preservation.
 8. **Complete evaluation, ablations & downstream experiments** (formerly Phase 7) — DONE within the Phase 8 prompt's scope (`docs/PHASE_8_FINAL_EVALUATION.md`, `docs/FINAL_RESEARCH_REPORT.md`: consolidation of A0/A-ft/B/C from saved artifacts, verified, reproducible; hypothesis not supported under the tested conditions). LPIPS, FID/KID and the downstream-utility study were NOT run (they need new models/training). Original plan text: target-pathology correctness, non-target stability, preservation (SSIM/LPIPS), quality (FID/KID), edit/text alignment, difference maps, ablation study, downstream classifier-utility experiment (real-only vs +PRISM-generated vs +our-generated). No fabricated numbers.
-9. **Application integration, final tests & documentation** (formerly Phase 8) — Streamlit or FastAPI+frontend demo consuming the validated inference pipeline, `tests/`, `docs/` (PROJECT_OVERVIEW, RESEARCH_BASELINE, NOVELTY, EXPERIMENTS, RESULTS, LIMITATIONS, REPRODUCIBILITY), final README.
+9. **Application integration, final tests & documentation** (formerly Phase 8) — DONE for the Phase 9 prompt's scope (`docs/PHASE_9_DELIVERY.md`, `README.md`): the smallest useful demo is the command-line `app/demo.py` (`cases` / `show` browse the saved A0/A-ft/B/C outputs offline; `generate` wraps the existing pipeline), every output labelled a synthetic research output that is not clinically validated; no web UI was built. Unverified here and documented as such: evaluation-setting live generation (needs a GPU) and the A-ft/B/C overlay arms (trained overlays are not in the repository). Original plan text: Streamlit or FastAPI+frontend demo consuming the validated inference pipeline, `tests/`, `docs/` (PROJECT_OVERVIEW, RESEARCH_BASELINE, NOVELTY, EXPERIMENTS, RESULTS, LIMITATIONS, REPRODUCIBILITY), final README.
 
 **Numbering note**: the Phase 1-3 reports were written under the earlier 8-phase numbering and refer to "Phase 5" (disease consistency) and "Phase 4" (refactor); under the current plan those are Phases 6 and 4 respectively, and the real-data prerequisites they mention are Phase 5.
 
 **Execution environments**: local development machine is CPU-only (no CUDA, 16 GB RAM — `docs/PHASE_1_AUDIT.md`); GPU work runs on Kaggle through the thin runner notebook (`docs/PHASE_4_GPU_ARCHITECTURE.md`). Kaggle sessions are time-limited and non-persistent: every run must write configs, logs and checkpoints to a recoverable run directory.
+
+**Final state (2026-10-24)**: all nine phases are done; the project's conclusion is that the hypothesis was **not supported** under the tested conditions (`docs/FINAL_RESEARCH_REPORT.md`). Start from `README.md`.
 
 **Execution order**: Phase 1 -> 2 -> ... -> 9, strictly sequential. **Wait for explicit instructions before beginning a new phase.** When a phase is requested, fully implement and validate it before moving on.
 

@@ -31,3 +31,7 @@ Thumbs.db
 
 # Kaggle packaging output
 dist/
+
+# Saved Kaggle artifacts and console logs copied next to the repo (they contain CheXpert-derived images): never commit
+genai phase*
+phase 5*
