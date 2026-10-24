@@ -23,14 +23,23 @@ A research project, not a clinical tool. It reproduces (by reconstruction) PRISM
 ```bash
 python -m venv .venv                                  # Python 3.10 was used
 .venv/Scripts/python.exe -m pip install -r requirements.txt --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
-.venv/Scripts/python.exe -m pytest tests -q           # 188 tests; CPU only, tiny Stable Diffusion test models (~15 min)
+.venv/Scripts/python.exe -m pytest tests -q           # 203 tests; CPU only, tiny Stable Diffusion test models (~15 min)
 ```
 
 The local machine is CPU-only. GPU work (fine-tuning, 512 px evaluation) ran on Kaggle T4s through the thin notebooks in `notebooks/` (Phase 5–7); everything else, including the whole report, runs on CPU.
 
-## Demo (`app/demo.py`)
+## Demo (`app/web_demo.py`, `app/demo.py`)
 
-A command-line demo that only wires existing code; it contains no model or loss logic. Every output carries the research-output disclaimer (image banner, PNG metadata, JSON card, console).
+Two demos that only wire existing code (`app/web_demo.py` browser viewer; `app/demo.py` command line); it contains no model or loss logic. Every output carries the research-output disclaimer (image banner, PNG metadata, JSON card, console).
+
+**0. Browser demo (localhost) — the easiest way to explore and present the saved results**
+
+```bash
+.venv/Scripts/python.exe app/web_demo.py --phase6-op "genai phase 6  v2 op" --phase7-op "genai phase 7 op"
+# then open  http://127.0.0.1:8765   (add --open to launch the browser, --port N to change the port; Ctrl+C stops it)
+```
+
+Pick a case (◀ ▶ or the ← → keys), the target condition and the arm (A0 / A-ft / B / C): the page shows the original X-ray, the reconstruction, the counterfactual and a change map side by side, the classifier scores before/after, PSNR, SSIM and changed-pixel percentage, and an overview of all arms for the case. Only what exists in the saved artifacts is offered: the sole condition represented is **add Cardiomegaly** (other findings are listed as unavailable), and a missing image or metric is shown as "unavailable", never as zero. It displays saved outputs only — it runs no model, needs no GPU or network, and cannot regenerate B/C (their weights are not available locally). It listens on 127.0.0.1 only because the images are CheXpert-derived; a persistent banner states that this is a research demonstration of synthetic counterfactuals, not clinically validated, not for diagnosis, and that classifier scores do not establish clinical correctness. The command-line demo below is unchanged.
 
 **1. Browse the saved A0 / A-ft / B / C results (CPU, offline; needs the saved Kaggle outputs, see "Artifacts")**
 
